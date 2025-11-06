@@ -112,8 +112,9 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         # Convert points to LineStrings grouped by patrol segment
         lines = []
         
-        # Use groupby_col if available (unique per patrol segment), otherwise patrol_id
-        group_col = 'groupby_col' if 'groupby_col' in points_gdf.columns else 'patrol_id'
+        # Group by patrol_id - each patrol should be a separate track
+        # Note: groupby_col in ecoscope contains subject_id, not patrol segment ID
+        group_col = 'patrol_id'
         
         for group_id in points_gdf[group_col].unique():
             patrol_points = points_gdf[points_gdf[group_col] == group_id].copy()
