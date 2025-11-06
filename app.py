@@ -69,12 +69,6 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         if points_gdf.empty:
             return None, "No patrol tracks found"
         
-        # Debug: Print available columns
-        import streamlit as st
-        st.write("DEBUG - Available columns:", list(points_gdf.columns))
-        st.write("DEBUG - Sample of first row:")
-        st.write(points_gdf.iloc[0].to_dict())
-        
         # Find time column for sorting points chronologically
         time_col = None
         for col in ['extra__recorded_at', 'recorded_at', 'fixtime', 'time', 'timestamp']:
@@ -145,11 +139,9 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             line_data = {
                 'geometry': line,
                 'patrol_id': patrol_id,
-                'patrol_title': first_point['patrol_title'] if 'patrol_title' in first_point.index else '',
-                'patrol_serial_number': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
-                'patrol_type': first_point['patrol_type'] if 'patrol_type' in first_point.index else '',
-                'patrol_status': first_point['patrol_status'] if 'patrol_status' in first_point.index else '',
-                'patrol_subject': first_point['patrol_subject'] if 'patrol_subject' in first_point.index else '',
+                'patrol_sn': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
+                'patrol_type': first_point['patrol_type__display'] if 'patrol_type__display' in first_point.index else (first_point['patrol_type__value'] if 'patrol_type__value' in first_point.index else ''),
+                'subject_id': first_point['extra__subject_id'] if 'extra__subject_id' in first_point.index else '',
                 'num_points': len(patrol_points),
                 'distance_km': line.length * 111
             }
@@ -336,10 +328,7 @@ if st.session_state.authenticated:
                 # Display preview
                 st.subheader("Data preview")
                 # Create display DataFrame without geometry and some redundant columns
-                cols_to_drop = ['geometry', 'patrol_type', 'start_time', 'end_time']
-                # Also drop patrol_type__value if it exists
-                if 'patrol_type__value' in gdf.columns:
-                    cols_to_drop.append('patrol_type__value')
+                cols_to_drop = ['geometry', 'start_time', 'end_time']
                 display_df = gdf.drop(columns=[col for col in cols_to_drop if col in gdf.columns]).copy()
                 st.dataframe(display_df)
                 
@@ -366,14 +355,13 @@ if st.session_state.authenticated:
                     gdf_export = gdf.copy()
                     column_mapping = {
                         'patrol_id': 'ptrl_id',
-                        'patrol_title': 'ptrl_title',
-                        'patrol_serial_number': 'ptrl_sn',
+                        'patrol_sn': 'ptrl_sn',
                         'patrol_type': 'ptrl_type',
-                        'patrol_status': 'ptrl_stat',
-                        'patrol_subject': 'ptrl_subj',
+                        'subject_id': 'subj_id',
                         'patrol_start_time': 'ptrl_start',
                         'patrol_end_time': 'ptrl_end',
-                        'distance_km': 'dist_km'
+                        'distance_km': 'dist_km',
+                        'num_points': 'num_pts'
                     }
                     # Only rename columns that exist
                     gdf_export = gdf_export.rename(columns={k: v for k, v in column_mapping.items() if k in gdf_export.columns})
