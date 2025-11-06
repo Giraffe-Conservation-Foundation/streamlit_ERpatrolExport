@@ -1,0 +1,6 @@
+streamlit>=1.28.0
+ecoscope-earth
+geopandas>=0.14.0
+pandas>=2.0.0
+shapely>=2.0.0
+pytz
