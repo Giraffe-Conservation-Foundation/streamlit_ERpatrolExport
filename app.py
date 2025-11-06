@@ -69,6 +69,12 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         if points_gdf.empty:
             return None, "No patrol tracks found"
         
+        # Debug: Print available columns
+        import streamlit as st
+        st.write("DEBUG - Available columns:", list(points_gdf.columns))
+        st.write("DEBUG - Sample of first row:")
+        st.write(points_gdf.iloc[0].to_dict())
+        
         # Find time column for sorting points chronologically
         time_col = None
         for col in ['extra__recorded_at', 'recorded_at', 'fixtime', 'time', 'timestamp']:
@@ -134,16 +140,16 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             first_point = patrol_points.iloc[0]
             
             # Use the actual patrol_id for metadata, not groupby_col
-            patrol_id = first_point.get('patrol_id', group_id)
+            patrol_id = first_point['patrol_id'] if 'patrol_id' in first_point.index else group_id
             
             line_data = {
                 'geometry': line,
                 'patrol_id': patrol_id,
-                'patrol_title': first_point.get('patrol_title', ''),
-                'patrol_serial_number': first_point.get('patrol_serial_number', ''),
-                'patrol_type': first_point.get('patrol_type', ''),
-                'patrol_status': first_point.get('patrol_status', ''),
-                'patrol_subject': first_point.get('patrol_subject', ''),
+                'patrol_title': first_point['patrol_title'] if 'patrol_title' in first_point.index else '',
+                'patrol_serial_number': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
+                'patrol_type': first_point['patrol_type'] if 'patrol_type' in first_point.index else '',
+                'patrol_status': first_point['patrol_status'] if 'patrol_status' in first_point.index else '',
+                'patrol_subject': first_point['patrol_subject'] if 'patrol_subject' in first_point.index else '',
                 'num_points': len(patrol_points),
                 'distance_km': line.length * 111
             }
