@@ -60,30 +60,6 @@ See [QUICKSTART.md](QUICKSTART.md) for detailed instructions.
 - EarthRanger account with API access and export permission
 - See [requirements.txt](requirements.txt) for all dependencies
 
-## 🚢 Deployment
-Deploy to Streamlit Cloud in minutes:
-1. Fork this repository
-2. Sign up at [share.streamlit.io](https://share.streamlit.io)
-3. Connect your GitHub repository
-4. No secrets needed - users enter credentials in the app!
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
-
-## 📁 Project Structure
-```
-streamlit_patrol/
-├── app.py                          # Main application
-├── requirements.txt                # Python dependencies
-├── runtime.txt                     # Python version
-├── .streamlit/
-│   └── config.toml                # Streamlit configuration
-├── README.md                       # This file
-├── QUICKSTART.md                   # Setup guide
-├── DEPLOYMENT.md                   # Deployment guide
-├── PROJECT_SUMMARY.md              # Technical overview
-├── setup.bat / setup.sh            # Automated setup scripts
-└── test_setup.py                   # Environment verification
-```
-
 ## 🔧 Configuration
 ### Shapefile Export
 The app automatically handles shapefile field name truncation (10-character limit):
@@ -94,13 +70,12 @@ The app automatically handles shapefile field name truncation (10-character limi
 | patrol_serial_number | ptrl_sn |
 | patrol_start_time | ptrl_start |
 | patrol_end_time | ptrl_end |
-
 ### Custom Filename Format
 Downloads are named: `patroltype_YYMMDD_YYMMDD.zip`
 Example: `Foot_Patrol_251021_251028.zip`
 
 ## 🤝 Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
+Code contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 👏 Credits
 
