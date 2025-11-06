@@ -6,3 +6,4 @@ shapely>=2.0.0
 pytz
 folium
 streamlit-folium
+numpy<2.0.0
