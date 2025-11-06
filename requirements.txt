@@ -1,6 +1,8 @@
 streamlit>=1.28.0
-ecoscope-earth
+ecoscope>=1.0.0
 geopandas>=0.14.0
 pandas>=2.0.0
 shapely>=2.0.0
 pytz
+folium
+streamlit-folium
