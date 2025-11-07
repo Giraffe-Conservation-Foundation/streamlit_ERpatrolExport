@@ -57,6 +57,12 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         # Get the patrol IDs that match our filter
         patrol_ids = patrols_df['id'].tolist() if 'id' in patrols_df.columns else patrols_df.index.tolist()
         
+        # Debug: Show what we're filtering
+        import streamlit as st
+        st.write(f"🔍 DEBUG: Requested patrol type: **{patrol_type_value}**")
+        st.write(f"🔍 DEBUG: Found {len(patrols_df)} patrols matching filter")
+        st.write(f"🔍 DEBUG: Patrol IDs: {patrol_ids}")
+        
         # Get patrol observations
         patrol_observations = er_io.get_patrol_observations(
             patrols_df=patrols_df,
@@ -72,10 +78,18 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         if points_gdf.empty:
             return None, "No patrol tracks found"
         
+        # Debug: Show what we got before filtering
+        st.write(f"🔍 DEBUG: Total points before filtering: {len(points_gdf)}")
+        if 'patrol_type__value' in points_gdf.columns:
+            st.write(f"🔍 DEBUG: Patrol types in data: {points_gdf['patrol_type__value'].unique().tolist()}")
+        if 'patrol_id' in points_gdf.columns:
+            st.write(f"🔍 DEBUG: Patrol IDs in data: {points_gdf['patrol_id'].unique().tolist()}")
+        
         # IMPORTANT: Filter to only include observations from the patrols we queried
         # This ensures we only get the selected patrol type
         if 'patrol_id' in points_gdf.columns and len(patrol_ids) > 0:
             points_gdf = points_gdf[points_gdf['patrol_id'].isin(patrol_ids)].copy()
+            st.write(f"🔍 DEBUG: Points after filtering by patrol_id: {len(points_gdf)}")
             if points_gdf.empty:
                 return None, f"No observations found for the selected patrols"
         
