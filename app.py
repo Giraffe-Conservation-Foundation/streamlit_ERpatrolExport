@@ -161,6 +161,22 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             # Get patrol metadata from first point
             first_point = patrol_points.iloc[0]
             
+            # Extract user/username from nested structure if available
+            subject_name = ''
+            if 'groupby_col_name' in first_point.index:
+                subject_name = first_point['groupby_col_name']
+            elif 'extra__subject_name' in first_point.index:
+                subject_name = first_point['extra__subject_name']
+            elif 'user' in first_point.index:
+                # Check if user is a dict with nested data
+                user_data = first_point['user']
+                if isinstance(user_data, dict):
+                    subject_name = user_data.get('username', user_data.get('name', ''))
+                else:
+                    subject_name = str(user_data) if user_data else ''
+            elif 'username' in first_point.index:
+                subject_name = first_point['username']
+            
             # Use the actual patrol_id for metadata, not groupby_col
             patrol_id = first_point['patrol_id'] if 'patrol_id' in first_point.index else group_id
             
@@ -170,7 +186,7 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
                 'patrol_sn': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
                 'patrol_type': first_point['patrol_type__display'] if 'patrol_type__display' in first_point.index else (first_point['patrol_type__value'] if 'patrol_type__value' in first_point.index else ''),
                 'subject_id': first_point['extra__subject_id'] if 'extra__subject_id' in first_point.index else '',
-                'subject_name': first_point['groupby_col_name'] if 'groupby_col_name' in first_point.index else (first_point['extra__subject_name'] if 'extra__subject_name' in first_point.index else ''),
+                'subject_name': subject_name,
                 'num_points': len(patrol_points),
                 'distance_km': line.length * 111
             }
