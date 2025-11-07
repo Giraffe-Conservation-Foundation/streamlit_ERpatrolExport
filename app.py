@@ -213,12 +213,14 @@ with st.sidebar:
     st.header("🔐 EarthRanger login")
     
     if not st.session_state.authenticated:
-        server = st.text_input("Server URL", placeholder="https://your-server.pamdas.org")
+        server_input = st.text_input("Server URL", placeholder="server.pamdas.org")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         
         if st.button("Login", type="primary"):
-            if server and username and password:
+            if server_input and username and password:
+                # Add https:// if not present
+                server = server_input if server_input.startswith('http') else f'https://{server_input}'
                 with st.spinner("Authenticating..."):
                     er_io, error = authenticate_earthranger(server, username, password)
                     if er_io:
@@ -454,6 +456,12 @@ else:
     3. Choose your date range
     4. Click "Download patrol tracks"
     5. Download the shapefile ZIP when ready
+    
+    ---
+    
+    **Citation:**
+    
+    Marneweck, CJ (2025) EarthRanger patrol shapefile downloader. Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/ with opensource code on GitHub https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
     ---
     *Built with Streamlit and Ecoscope*
