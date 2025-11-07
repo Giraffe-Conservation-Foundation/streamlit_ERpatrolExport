@@ -54,6 +54,9 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         if patrols_df.empty:
             return None, "No patrols found for the specified criteria"
         
+        # Get the patrol IDs that match our filter
+        patrol_ids = patrols_df['id'].tolist() if 'id' in patrols_df.columns else patrols_df.index.tolist()
+        
         # Get patrol observations
         patrol_observations = er_io.get_patrol_observations(
             patrols_df=patrols_df,
@@ -68,6 +71,13 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             
         if points_gdf.empty:
             return None, "No patrol tracks found"
+        
+        # IMPORTANT: Filter to only include observations from the patrols we queried
+        # This ensures we only get the selected patrol type
+        if 'patrol_id' in points_gdf.columns and len(patrol_ids) > 0:
+            points_gdf = points_gdf[points_gdf['patrol_id'].isin(patrol_ids)].copy()
+            if points_gdf.empty:
+                return None, f"No observations found for the selected patrols"
         
         # Find time column for sorting points chronologically
         time_col = None
@@ -215,16 +225,26 @@ if st.session_state.authenticated:
     col1, col2 = st.columns(2)
     
     with col1:
-        # Get available patrol types
+        # Get available patrol types - only show those with active patrols
         try:
+            # Get all patrol types
             patrol_types_df = st.session_state.er_io.get_patrol_types()
+            
+            # Filter to only active patrol types
+            if 'is_active' in patrol_types_df.columns:
+                patrol_types_df = patrol_types_df[patrol_types_df['is_active'] == True]
+            
             patrol_type_options = patrol_types_df['value'].tolist()
             
-            patrol_type = st.selectbox(
-                "Select patrol type",
-                options=patrol_type_options,
-                help="Choose the type of patrol to download"
-            )
+            if not patrol_type_options:
+                st.warning("No active patrol types found")
+                patrol_type = st.text_input("Enter patrol type value")
+            else:
+                patrol_type = st.selectbox(
+                    "Select patrol type",
+                    options=patrol_type_options,
+                    help="Choose the type of patrol to download"
+                )
         except Exception as e:
             st.error(f"Error loading patrol types: {e}")
             patrol_type = st.text_input("Enter patrol type value")
