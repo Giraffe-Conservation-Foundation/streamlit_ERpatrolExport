@@ -44,15 +44,34 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
     """Download patrol tracks as GeoDataFrame and convert to LineStrings"""
     try:
         # Get patrols based on filters
+        # Note: patrol_type_value parameter may not filter correctly, so we filter manually
         patrols_df = er_io.get_patrols(
             since=since,
             until=until,
-            patrol_type_value=patrol_type_value,
             status=['done', 'active']
         )
         
         if patrols_df.empty:
             return None, "No patrols found for the specified criteria"
+        
+        # Debug: Show what columns are in patrols_df
+        import streamlit as st
+        st.write(f"🔍 DEBUG: Columns in patrols_df: {list(patrols_df.columns)}")
+        st.write(f"🔍 DEBUG: Total patrols before filtering: {len(patrols_df)}")
+        if len(patrols_df) > 0:
+            st.write(f"🔍 DEBUG: Sample patrol data:")
+            st.write(patrols_df.head(2).to_dict())
+        
+        # Manually filter by patrol_type since the API filter doesn't work reliably
+        if 'patrol_type' in patrols_df.columns:
+            # patrol_type column contains the UUID, so we need to filter by the value field
+            if 'patrol_type__value' in patrols_df.columns:
+                patrols_df = patrols_df[patrols_df['patrol_type__value'] == patrol_type_value].copy()
+            elif 'type' in patrols_df.columns:
+                patrols_df = patrols_df[patrols_df['type'] == patrol_type_value].copy()
+        
+        if patrols_df.empty:
+            return None, f"No patrols found for type: {patrol_type_value}"
         
         # Get the patrol IDs that match our filter
         patrol_ids = patrols_df['id'].tolist() if 'id' in patrols_df.columns else patrols_df.index.tolist()
