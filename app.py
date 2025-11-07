@@ -434,6 +434,23 @@ if st.session_state.authenticated:
                         )
                 except Exception as e:
                     st.error(f"❌ Error creating shapefile: {e}")
+    
+    # Citation section at bottom of main area
+    st.markdown("""
+    ---
+    
+    **Citation:**
+    
+    Marneweck, CJ (2025) EarthRanger patrol shapefile downloader. Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    
+    ---
+    
+    Opensource code on GitHub https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
+    
+    ---
+    
+    Created by the Giraffe Conservation Foundation, powered by Ecoscope
+    """)
 
 else:
     st.info("👈 Please login using the sidebar to access the patrol download feature")
@@ -461,15 +478,13 @@ else:
     
     **Citation:**
     
-    Marneweck, CJ (2025) EarthRanger patrol shapefile downloader. Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/ with opensource code on GitHub https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
+    Marneweck, CJ (2025) EarthRanger patrol shapefile downloader. Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     ---
-    *Built with Streamlit and Ecoscope*
+    
+    Opensource code on GitHub https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
+    
+    ---
+    
+    Created by the Giraffe Conservation Foundation, powered by Ecoscope
     """)
-
-# Footer
-st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: gray;'>Created by the Giraffe Conservation Foundation, powered by Ecoscope</div>",
-    unsafe_allow_html=True
-)
