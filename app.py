@@ -170,7 +170,7 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
                 'patrol_sn': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
                 'patrol_type': first_point['patrol_type__display'] if 'patrol_type__display' in first_point.index else (first_point['patrol_type__value'] if 'patrol_type__value' in first_point.index else ''),
                 'subject_id': first_point['extra__subject_id'] if 'extra__subject_id' in first_point.index else '',
-                'subject_name': first_point['groupby_col'] if 'groupby_col' in first_point.index else '',
+                'subject_name': first_point['groupby_col_name'] if 'groupby_col_name' in first_point.index else (first_point['extra__subject_name'] if 'extra__subject_name' in first_point.index else ''),
                 'num_points': len(patrol_points),
                 'distance_km': line.length * 111
             }
