@@ -63,7 +63,23 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
                     return segment['patrol_type']
             return None
         
+        def get_patrol_subject(row):
+            """Extract patrol subject (leader name) from patrol_segments"""
+            if 'patrol_segments' in row and isinstance(row['patrol_segments'], list) and len(row['patrol_segments']) > 0:
+                segment = row['patrol_segments'][0]
+                if isinstance(segment, dict):
+                    # Try different possible subject field names
+                    if 'leader' in segment:
+                        leader = segment['leader']
+                        if isinstance(leader, dict):
+                            return leader.get('name', leader.get('username', ''))
+                        return str(leader) if leader else ''
+                    elif 'patrol_subject' in segment:
+                        return segment['patrol_subject']
+            return ''
+        
         patrols_df['patrol_type_extracted'] = patrols_df.apply(get_patrol_type, axis=1)
+        patrols_df['patrol_subject_extracted'] = patrols_df.apply(get_patrol_subject, axis=1)
         
         # Filter by patrol_type
         patrols_df = patrols_df[patrols_df['patrol_type_extracted'] == patrol_type_value].copy()
@@ -95,6 +111,12 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             points_gdf = points_gdf[points_gdf['patrol_id'].isin(patrol_ids)].copy()
             if points_gdf.empty:
                 return None, f"No observations found for the selected patrols"
+        
+        # Merge patrol subject names into points data
+        if 'patrol_subject_extracted' in patrols_df.columns and 'patrol_id' in points_gdf.columns:
+            # Create mapping of patrol_id to subject name
+            patrol_subject_map = dict(zip(patrols_df['id'], patrols_df['patrol_subject_extracted']))
+            points_gdf['patrol_subject_name'] = points_gdf['patrol_id'].map(patrol_subject_map)
         
         # Find time column for sorting points chronologically
         time_col = None
@@ -161,21 +183,20 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             # Get patrol metadata from first point
             first_point = patrol_points.iloc[0]
             
-            # Extract user/username from nested structure if available
-            subject_name = ''
-            if 'groupby_col_name' in first_point.index:
-                subject_name = first_point['groupby_col_name']
-            elif 'extra__subject_name' in first_point.index:
-                subject_name = first_point['extra__subject_name']
-            elif 'user' in first_point.index:
-                # Check if user is a dict with nested data
-                user_data = first_point['user']
-                if isinstance(user_data, dict):
-                    subject_name = user_data.get('username', user_data.get('name', ''))
+            # Extract patrol leader/subject name (the person leading the patrol)
+            patrol_leader = ''
+            if 'patrol_subject_name' in first_point.index:
+                patrol_leader = first_point['patrol_subject_name']
+            elif 'leader' in first_point.index:
+                leader_data = first_point['leader']
+                if isinstance(leader_data, dict):
+                    patrol_leader = leader_data.get('name', leader_data.get('username', ''))
                 else:
-                    subject_name = str(user_data) if user_data else ''
-            elif 'username' in first_point.index:
-                subject_name = first_point['username']
+                    patrol_leader = str(leader_data) if leader_data else ''
+            elif 'patrol_leader' in first_point.index:
+                patrol_leader = first_point['patrol_leader']
+            elif 'patrol_subject' in first_point.index:
+                patrol_leader = first_point['patrol_subject']
             
             # Use the actual patrol_id for metadata, not groupby_col
             patrol_id = first_point['patrol_id'] if 'patrol_id' in first_point.index else group_id
@@ -186,7 +207,7 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
                 'patrol_sn': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
                 'patrol_type': first_point['patrol_type__display'] if 'patrol_type__display' in first_point.index else (first_point['patrol_type__value'] if 'patrol_type__value' in first_point.index else ''),
                 'subject_id': first_point['extra__subject_id'] if 'extra__subject_id' in first_point.index else '',
-                'subject_name': subject_name,
+                'subject_name': patrol_leader,
                 'num_points': len(patrol_points),
                 'distance_km': line.length * 111
             }
