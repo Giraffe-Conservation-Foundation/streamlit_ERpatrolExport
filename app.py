@@ -6,7 +6,7 @@ import geopandas as gpd
 import tempfile
 import os
 import zipfile
-from shapely.geometry import LineString
+from shapely.geometry import LineString, shape
 
 # Optional imports for map
 try:
@@ -601,9 +601,19 @@ if st.session_state.authenticated:
                                         )
                                         
                                         if not events_df.empty:
-                                            # Convert to GeoDataFrame with geometry
-                                            from ecoscope.io.earthranger import geometry_from_event_geojson
-                                            events_gdf = geometry_from_event_geojson(events_df, force_point_geometry=True, drop_null_geometry=True)
+                                            # Convert to GeoDataFrame with geometry from geojson
+                                            def extract_geometry(row):
+                                                if 'geojson' in row and row['geojson']:
+                                                    try:
+                                                        if isinstance(row['geojson'], dict):
+                                                            return shape(row['geojson'])
+                                                    except:
+                                                        pass
+                                                return None
+                                            
+                                            events_df['geometry'] = events_df.apply(extract_geometry, axis=1)
+                                            # Filter out events without geometry
+                                            events_gdf = events_df[events_df['geometry'].notna()].copy()
                                             events_gdf = gpd.GeoDataFrame(events_gdf, geometry='geometry', crs=4326)
                                             
                                             # Now fetch full details for each event by event ID
