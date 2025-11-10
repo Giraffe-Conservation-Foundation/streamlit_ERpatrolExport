@@ -602,7 +602,7 @@ if st.session_state.authenticated:
                                         
                                         if not events_df.empty:
                                             # Convert to GeoDataFrame with geometry
-                                            from ecoscope.io.earthranger_utils import geometry_from_event_geojson
+                                            from ecoscope.io.earthranger import geometry_from_event_geojson
                                             events_gdf = geometry_from_event_geojson(events_df, force_point_geometry=True, drop_null_geometry=True)
                                             events_gdf = gpd.GeoDataFrame(events_gdf, geometry='geometry', crs=4326)
                                             
