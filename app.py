@@ -5,6 +5,7 @@ from ecoscope.io.earthranger import EarthRangerIO
 import geopandas as gpd
 import tempfile
 import os
+import zipfile
 from shapely.geometry import LineString
 
 # Optional imports for map
@@ -40,11 +41,10 @@ def authenticate_earthranger(server, username, password):
     except Exception as e:
         return None, str(e)
 
-def download_patrol_tracks(er_io, patrol_type_value, since, until):
+def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=None):
     """Download patrol tracks as GeoDataFrame and convert to LineStrings"""
     try:
         # Get patrols based on filters
-        # Note: patrol_type_value parameter may not filter correctly, so we filter manually
         patrols_df = er_io.get_patrols(
             since=since,
             until=until,
@@ -87,6 +87,19 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
         if patrols_df.empty:
             return None, f"No patrols found for type: {patrol_type_value}"
         
+        # Filter by subject name(s) if specified
+        if subject_name:
+            if isinstance(subject_name, list):
+                # Multiple leaders selected
+                patrols_df = patrols_df[patrols_df['patrol_subject_extracted'].isin(subject_name)].copy()
+                if patrols_df.empty:
+                    return None, f"No patrols found for leaders: {', '.join(subject_name)}"
+            else:
+                # Single leader (backwards compatibility)
+                patrols_df = patrols_df[patrols_df['patrol_subject_extracted'] == subject_name].copy()
+                if patrols_df.empty:
+                    return None, f"No patrols found for leader: {subject_name}"
+        
         # Get the patrol IDs that match our filter
         patrol_ids = patrols_df['id'].tolist() if 'id' in patrols_df.columns else patrols_df.index.tolist()
         
@@ -112,11 +125,17 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             if points_gdf.empty:
                 return None, f"No observations found for the selected patrols"
         
-        # Merge patrol subject names into points data
-        if 'patrol_subject_extracted' in patrols_df.columns and 'patrol_id' in points_gdf.columns:
-            # Create mapping of patrol_id to subject name
-            patrol_subject_map = dict(zip(patrols_df['id'], patrols_df['patrol_subject_extracted']))
-            points_gdf['patrol_subject_name'] = points_gdf['patrol_id'].map(patrol_subject_map)
+        # Merge patrol subject names and titles into points data
+        if 'patrol_id' in points_gdf.columns:
+            if 'patrol_subject_extracted' in patrols_df.columns:
+                # Create mapping of patrol_id to subject name
+                patrol_subject_map = dict(zip(patrols_df['id'], patrols_df['patrol_subject_extracted']))
+                points_gdf['patrol_subject_name'] = points_gdf['patrol_id'].map(patrol_subject_map)
+            
+            # Add patrol title/name if available
+            if 'title' in patrols_df.columns:
+                patrol_title_map = dict(zip(patrols_df['id'], patrols_df['title']))
+                points_gdf['patrol_title'] = points_gdf['patrol_id'].map(patrol_title_map)
         
         # Find time column for sorting points chronologically
         time_col = None
@@ -204,6 +223,7 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until):
             line_data = {
                 'geometry': line,
                 'patrol_id': patrol_id,
+                'patrol_title': first_point['patrol_title'] if 'patrol_title' in first_point.index else '',
                 'patrol_sn': first_point['patrol_serial_number'] if 'patrol_serial_number' in first_point.index else '',
                 'patrol_type': first_point['patrol_type__display'] if 'patrol_type__display' in first_point.index else (first_point['patrol_type__value'] if 'patrol_type__value' in first_point.index else ''),
                 'subject_id': first_point['extra__subject_id'] if 'extra__subject_id' in first_point.index else '',
@@ -306,10 +326,7 @@ if st.session_state.authenticated:
             st.error(f"Error loading patrol types: {e}")
             patrol_type = st.text_input("Enter patrol type value")
     
-    with col2:
-        st.write("") # Spacing
-    
-    # Date range selection
+    # Date range selection row
     col3, col4 = st.columns(2)
     
     with col3:
@@ -330,22 +347,70 @@ if st.session_state.authenticated:
     since = datetime.combine(start_date, datetime.min.time()).isoformat()
     until = datetime.combine(end_date, datetime.max.time()).isoformat()
     
+    with col2:
+        # Optional dropdown filter for patrol leader name
+        with st.spinner("Loading patrol leaders..."):
+            try:
+                # Fetch a sample of patrols to get available leaders
+                sample_patrols = st.session_state.er_io.get_patrols(
+                    since=since,
+                    until=until,
+                    status=['done', 'active']
+                )
+                
+                if not sample_patrols.empty:
+                    # Extract patrol leaders
+                    def get_patrol_subject(row):
+                        if 'patrol_segments' in row and isinstance(row['patrol_segments'], list):
+                            for segment in row['patrol_segments']:
+                                if isinstance(segment, dict):
+                                    leader = segment.get('leader', {})
+                                    if isinstance(leader, dict):
+                                        return leader.get('name', '')
+                        return ''
+                    
+                    sample_patrols['leader_name'] = sample_patrols.apply(get_patrol_subject, axis=1)
+                    leader_names = sorted(sample_patrols['leader_name'].dropna().unique().tolist())
+                    leader_names = [name for name in leader_names if name]  # Remove empty strings
+                    
+                    if leader_names:
+                        selected_leaders = st.multiselect(
+                            "Filter by patrol leader(s) (optional)",
+                            options=leader_names,
+                            default=[],
+                            help="Select one or more patrol leaders, or leave empty for all"
+                        )
+                        subject_name_filter = selected_leaders if selected_leaders else None
+                    else:
+                        subject_name_filter = None
+                        st.info("No patrol leaders found in date range")
+                else:
+                    subject_name_filter = None
+                    st.info("No patrols found in date range")
+            except Exception as e:
+                subject_name_filter = None
+                st.warning(f"Could not load patrol leaders: {e}")
+    
     st.markdown("---")
     
-    # Download button
+    # Download button for patrol tracks
     if st.button("🔽 Download patrol tracks", type="primary", use_container_width=True):
         with st.spinner("Downloading patrol tracks..."):
             gdf, error = download_patrol_tracks(
                 st.session_state.er_io,
                 patrol_type,
                 since,
-                until
+                until,
+                subject_name=subject_name_filter if subject_name_filter else None
             )
             
             if error:
                 st.error(f"❌ Error: {error}")
             elif gdf is not None:
                 st.success(f"✅ Successfully downloaded {len(gdf)} patrol track(s)!")
+                
+                # Store the downloaded patrols in session state for events extraction
+                st.session_state.downloaded_patrols_gdf = gdf
                 
                 # Display map preview
                 st.subheader("📍 Map preview")
@@ -450,7 +515,6 @@ if st.session_state.authenticated:
                         gdf_export.to_file(shapefile_path)
                         
                         # Create a zip file with all shapefile components
-                        import zipfile
                         zip_path = os.path.join(tmpdir, f"{base_filename}.zip")
                         
                         with zipfile.ZipFile(zip_path, 'w') as zipf:
@@ -473,6 +537,341 @@ if st.session_state.authenticated:
                         )
                 except Exception as e:
                     st.error(f"❌ Error creating shapefile: {e}")
+    
+    # Events extraction section
+    st.markdown("---")
+    st.subheader("📋 Extract patrol events")
+    st.markdown("Extract events associated with downloaded patrols")
+    
+    # Check if patrols have been downloaded
+    if 'downloaded_patrols_gdf' in st.session_state and st.session_state.downloaded_patrols_gdf is not None:
+        gdf_patrols = st.session_state.downloaded_patrols_gdf
+        
+        # Show available patrols
+        st.write(f"Found {len(gdf_patrols)} patrol(s) to extract events from")
+        
+        # Button to extract events
+        if st.button("📥 Extract patrol events", type="primary", use_container_width=True):
+            with st.spinner("Extracting events from patrols..."):
+                try:
+                    # Get the original patrols dataframe with patrol_segments
+                    # Use patrol_type_value instead of patrol_type since we have the value, not UUID
+                    patrols_df = st.session_state.er_io.get_patrols(
+                        since=since,
+                        until=until,
+                        patrol_type_value=patrol_type,
+                        status=['done', 'active']
+                    )
+                    
+                    # Filter to only the patrol IDs we have in our downloaded tracks
+                    patrol_ids = gdf_patrols['patrol_id'].unique().tolist()
+                    patrols_df = patrols_df[patrols_df['id'].isin(patrol_ids)].copy()
+                    
+                    if patrols_df.empty:
+                        st.warning("No matching patrols found")
+                    else:
+                        # Get events using get_events with patrol segments to include full details
+                        try:
+                            # Extract all patrol segment IDs from the matched patrols
+                            patrol_segment_ids = []
+                            for _, patrol in patrols_df.iterrows():
+                                for segment in patrol.get('patrol_segments', []):
+                                    if 'id' in segment:
+                                        patrol_segment_ids.append(segment['id'])
+                            
+                            if not patrol_segment_ids:
+                                st.warning("No patrol segments found")
+                                events_combined = gpd.GeoDataFrame()
+                            else:
+                                # Get events for each patrol segment with full details
+                                all_events = []
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+                                
+                                for idx, segment_id in enumerate(patrol_segment_ids):
+                                    status_text.text(f"Processing segment {idx + 1}/{len(patrol_segment_ids)}...")
+                                    try:
+                                        # Use get_patrol_segment_events which correctly filters to patrol segment
+                                        events_df = st.session_state.er_io.get_patrol_segment_events(
+                                            patrol_segment_id=segment_id,
+                                            include_details=True,
+                                            include_notes=True,
+                                            include_related_events=False,
+                                            include_files=False
+                                        )
+                                        
+                                        if not events_df.empty:
+                                            # Convert to GeoDataFrame with geometry
+                                            from ecoscope.io.earthranger_utils import geometry_from_event_geojson
+                                            events_gdf = geometry_from_event_geojson(events_df, force_point_geometry=True, drop_null_geometry=True)
+                                            events_gdf = gpd.GeoDataFrame(events_gdf, geometry='geometry', crs=4326)
+                                            
+                                            # Now fetch full details for each event by event ID
+                                            if 'id' in events_gdf.columns:
+                                                event_ids = events_gdf['id'].tolist()
+                                                status_text.text(f"Segment {idx + 1}/{len(patrol_segment_ids)}: Fetching details for {len(event_ids)} events...")
+                                                
+                                                # Fetch events with details using event IDs
+                                                detailed_events = st.session_state.er_io.get_events(
+                                                    event_ids=event_ids,
+                                                    include_details=True,
+                                                    include_notes=True
+                                                )
+                                                
+                                                if not detailed_events.empty and 'event_details' in detailed_events.columns:
+                                                    # Merge event_details back into events_gdf
+                                                    # Reset index to use 'id' for merging
+                                                    detailed_events_subset = detailed_events.reset_index()[['id', 'event_details']]
+                                                    events_gdf = events_gdf.merge(detailed_events_subset, on='id', how='left')
+                                                    has_details = True
+                                                else:
+                                                    has_details = False
+                                            else:
+                                                has_details = False
+                                            
+                                            status_text.text(f"Segment {idx + 1}/{len(patrol_segment_ids)}: Found {len(events_gdf)} events (details: {has_details})")
+                                            all_events.append(events_gdf)
+                                        else:
+                                            status_text.text(f"Segment {idx + 1}/{len(patrol_segment_ids)}: No events")
+                                    except Exception as e:
+                                        status_text.text(f"Segment {idx + 1}/{len(patrol_segment_ids)}: Error - {str(e)[:50]}")
+                                        st.warning(f"Could not get events for segment {segment_id}: {e}")
+                                    
+                                    progress_bar.progress((idx + 1) / len(patrol_segment_ids))
+                                
+                                progress_bar.empty()
+                                status_text.empty()
+                                
+                                # Combine all events
+                                if all_events:
+                                    events_combined = gpd.GeoDataFrame(pd.concat(all_events, ignore_index=True))
+                                else:
+                                    events_combined = gpd.GeoDataFrame()
+                            
+                            if events_combined.empty:
+                                st.info("No events found for these patrols")
+                            else:
+                                    st.success(f"✅ Successfully extracted {len(events_combined)} event(s)!")
+                                    
+                                    # Extract coordinates from geometry
+                                    if 'geometry' in events_combined.columns:
+                                        events_combined['longitude'] = events_combined.geometry.x
+                                        events_combined['latitude'] = events_combined.geometry.y
+                                    
+                                    
+                                    # Extract time from geojson.properties.datetime if time column doesn't exist
+                                    if 'time' not in events_combined.columns and 'geojson' in events_combined.columns:
+                                        def extract_datetime(geojson):
+                                            if isinstance(geojson, dict):
+                                                props = geojson.get('properties', {})
+                                                if isinstance(props, dict):
+                                                    dt_str = props.get('datetime')
+                                                    if dt_str:
+                                                        return pd.to_datetime(dt_str, utc=True)
+                                            return None
+                                        events_combined['time'] = events_combined['geojson'].apply(extract_datetime)
+                                    
+                                    # Extract reported_by name (subject_name)
+                                    if 'reported_by' in events_combined.columns:
+                                        events_combined['subject_name'] = events_combined['reported_by'].apply(
+                                            lambda x: x.get('name', '') if isinstance(x, dict) else ''
+                                        )
+                                    
+                                    # Unnest event_details
+                                    if 'event_details' in events_combined.columns:
+                                        # Extract event_details fields into separate columns
+                                        event_details_df = pd.json_normalize(events_combined['event_details'])
+                                        # Add prefix to avoid column name conflicts
+                                        event_details_df.columns = ['detail_' + col for col in event_details_df.columns]
+                                        # Combine with main dataframe - preserve geometry
+                                        geometry_col = events_combined.geometry
+                                        events_combined = pd.concat([events_combined.reset_index(drop=True), event_details_df], axis=1)
+                                        # Restore as GeoDataFrame
+                                        events_combined = gpd.GeoDataFrame(events_combined, geometry=geometry_col.reset_index(drop=True), crs=4326)
+                                    
+                                    # Extract coordinates from location dict if it exists
+                                    if 'location' in events_combined.columns:
+                                        events_combined['location_lat'] = events_combined['location'].apply(
+                                            lambda x: x.get('latitude') if isinstance(x, dict) else None
+                                        )
+                                        events_combined['location_lon'] = events_combined['location'].apply(
+                                            lambda x: x.get('longitude') if isinstance(x, dict) else None
+                                        )
+                                    
+                                    # Display map preview with both patrols and events
+                                    st.subheader("📍 Events map preview")
+                                    if HAS_FOLIUM:
+                                        try:
+                                            # Calculate center point from events
+                                            events_bounds = events_combined.total_bounds  # [minx, miny, maxx, maxy]
+                                            center_lat = (events_bounds[1] + events_bounds[3]) / 2
+                                            center_lon = (events_bounds[0] + events_bounds[2]) / 2
+                                            
+                                            # Create map
+                                            m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+                                            
+                                            # Add patrol tracks
+                                            patrol_colors = ['blue', 'darkblue', 'lightblue', 'cadetblue']
+                                            for idx, row in gdf_patrols.iterrows():
+                                                color = patrol_colors[idx % len(patrol_colors)]
+                                                coords = [(coord[1], coord[0]) for coord in row.geometry.coords]  # lat, lon
+                                                
+                                                folium.PolyLine(
+                                                    coords,
+                                                    color=color,
+                                                    weight=3,
+                                                    opacity=0.6,
+                                                    popup=f"Patrol: {row.get('patrol_sn', 'N/A')}",
+                                                ).add_to(m)
+                                            
+                                            # Add event markers
+                                            event_colors = {
+                                                'default': 'red'
+                                            }
+                                            
+                                            for idx, row in events_combined.iterrows():
+                                                lat = row.geometry.y
+                                                lon = row.geometry.x
+                                                
+                                                # Get event type for popup
+                                                event_type = row.get('event_type', 'Event')
+                                                event_time = row.get('time', 'N/A')
+                                                patrol_sn = row.get('patrol_serial_number', 'N/A')
+                                                
+                                                popup_text = f"<b>{event_type}</b><br>Time: {event_time}<br>Patrol: {patrol_sn}"
+                                                
+                                                folium.CircleMarker(
+                                                    location=[lat, lon],
+                                                    radius=6,
+                                                    color='red',
+                                                    fill=True,
+                                                    fillColor='red',
+                                                    fillOpacity=0.7,
+                                                    popup=popup_text,
+                                                ).add_to(m)
+                                            
+                                            # Fit bounds to show both patrols and events
+                                            all_bounds = [
+                                                [events_bounds[1], events_bounds[0]], 
+                                                [events_bounds[3], events_bounds[2]]
+                                            ]
+                                            m.fit_bounds(all_bounds)
+                                            
+                                            # Display map
+                                            folium_static(m, width=800, height=500)
+                                            
+                                        except Exception as e:
+                                            st.warning(f"Could not create map preview: {e}")
+                                    else:
+                                        st.info("💡 Install folium and streamlit-folium to see map preview")
+                                    
+                                    # Display data preview
+                                    st.subheader("Events data preview")
+                                    # Create display DataFrame without geometry and geojson
+                                    display_cols = [col for col in events_combined.columns if col not in ['geometry', 'geojson']]
+                                    display_df = events_combined[display_cols].copy()
+                                    
+                                    # Clean up the display
+                                    # Remove unwanted columns
+                                    cols_to_remove = ['level_8', 'index', 'location', 'reported_by', 'event_details', 
+                                                     'geojson', 'attributes', 'notes', 'patrols', 'patrol_segments',
+                                                     'is_contained_in', 'related_subjects',
+                                                     'location_lat', 'location_lon', 'message', 'provenance',
+                                                     'event_category', 'priority_label', 'comment', 'end_time',
+                                                     'sort_at', 'icon_id', 'url', 'image_url', 'external_source']
+                                    display_df = display_df.drop(columns=[col for col in cols_to_remove if col in display_df.columns])
+                                    
+                                    # Rename columns for better readability
+                                    rename_mapping = {
+                                        'id': 'event_id',
+                                        'time': 'event_datetime'
+                                    }
+                                    # Only rename columns that exist
+                                    rename_mapping = {k: v for k, v in rename_mapping.items() if k in display_df.columns}
+                                    if rename_mapping:
+                                        display_df = display_df.rename(columns=rename_mapping)
+                                    
+                                    # Reorder columns to put important ones first
+                                    preferred_order = ['event_id', 'serial_number', 'event_type', 'subject_name',
+                                                      'longitude', 'latitude', 'event_datetime',
+                                                      'priority', 'title', 'state', 
+                                                      'updated_at', 'created_at', 'is_collection']
+                                    
+                                    # Add all detail_ columns after the main columns
+                                    detail_cols = sorted([col for col in display_df.columns if col.startswith('detail_')])
+                                    preferred_order.extend(detail_cols)
+                                    
+                                    # Get columns in preferred order (only if they exist)
+                                    ordered_cols = [col for col in preferred_order if col in display_df.columns]
+                                    # Add remaining columns
+                                    remaining_cols = [col for col in display_df.columns if col not in ordered_cols]
+                                    display_df = display_df[ordered_cols + remaining_cols]
+                                    
+                                    st.dataframe(display_df)
+                                    
+                                    # Show summary statistics
+                                    col_e1, col_e2 = st.columns(2)
+                                    with col_e1:
+                                        st.metric("Total events", len(events_combined))
+                                    with col_e2:
+                                        if 'event_type' in events_combined.columns:
+                                            st.metric("Event types", events_combined['event_type'].nunique())
+                                    
+                                    # Save to CSV
+                                    try:
+                                        start_str = start_date.strftime('%y%m%d')
+                                        end_str = end_date.strftime('%y%m%d')
+                                        patrol_type_clean = "".join(c if c.isalnum() else "_" for c in patrol_type)
+                                        base_filename = f"{patrol_type_clean}_events_{start_str}_{end_str}"
+                                        
+                                        # Prepare CSV export - remove geometry and geojson columns
+                                        events_export = events_combined.copy()
+                                        cols_to_remove_export = ['geometry', 'geojson']
+                                        events_export = events_export.drop(columns=[col for col in cols_to_remove_export if col in events_export.columns])
+                                        
+                                        # Remove same columns as display
+                                        cols_to_remove_from_export = ['level_8', 'index', 'location', 'reported_by', 'event_details', 
+                                                                     'geojson', 'attributes', 'notes', 'patrols', 
+                                                                     'patrol_segments', 'is_contained_in', 'related_subjects', 
+                                                                     'location_lat', 'location_lon', 
+                                                                     'message', 'provenance', 'event_category', 'priority_label', 
+                                                                     'comment', 'end_time', 'sort_at', 'icon_id', 'url', 
+                                                                     'image_url', 'external_source']
+                                        events_export = events_export.drop(columns=[col for col in cols_to_remove_from_export if col in events_export.columns])
+                                        
+                                        # Apply same renaming as display
+                                        rename_mapping = {
+                                            'id': 'event_id',
+                                            'time': 'event_datetime'
+                                        }
+                                        # Only rename columns that exist
+                                        rename_mapping = {k: v for k, v in rename_mapping.items() if k in events_export.columns}
+                                        if rename_mapping:
+                                            events_export = events_export.rename(columns=rename_mapping)
+                                        
+                                        # Convert to CSV
+                                        csv_data = events_export.to_csv(index=False)
+                                        
+                                        st.download_button(
+                                            label="📥 Download Events CSV",
+                                            data=csv_data,
+                                            file_name=f"{base_filename}.csv",
+                                            mime="text/csv",
+                                            use_container_width=True
+                                        )
+                                    except Exception as e:
+                                        st.error(f"❌ Error creating events CSV: {e}")
+                        except Exception as e:
+                            st.error(f"❌ Error extracting patrol events: {e}")
+                            import traceback
+                            st.error(traceback.format_exc())
+                
+                except Exception as e:
+                    st.error(f"❌ Error extracting events: {e}")
+                    import traceback
+                    st.error(traceback.format_exc())
+    else:
+        st.info("👆 Download patrol tracks first to enable event extraction")
     
     # Citation section at bottom of main area
     st.markdown("""
