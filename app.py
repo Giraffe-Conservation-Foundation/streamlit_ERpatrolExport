@@ -881,13 +881,11 @@ if st.session_state.authenticated:
     
     Marneweck, CJ (2025) EarthRanger patrol shapefile downloader. Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
-    ---
-    
     Opensource code on GitHub https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
-    ---
-    
     Created by the Giraffe Conservation Foundation, powered by Ecoscope
+    
+    Made with ❤️ for wildlife conservation
     """)
 
 else:
