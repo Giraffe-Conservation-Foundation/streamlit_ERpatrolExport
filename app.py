@@ -19,7 +19,7 @@ except ImportError:
 # Page configuration
 st.set_page_config(
     page_title="Patrol Shapefile Downloader",
-    page_icon="🗺️",
+    page_icon="GCF logo_main.png",
     layout="wide"
 )
 
@@ -268,6 +268,12 @@ st.markdown("Download patrol tracks from EarthRanger as shapefiles")
 
 # Sidebar for authentication
 with st.sidebar:
+    # Display logo
+    try:
+        st.image("GCF logo_main.png", use_container_width=True)
+    except:
+        pass  # If logo not found, continue without it
+    
     st.header("🔐 EarthRanger login")
     
     if not st.session_state.authenticated:
