@@ -579,11 +579,34 @@ if st.session_state.authenticated:
                         # Get events using get_events with patrol segments to include full details
                         try:
                             # Extract all patrol segment IDs from the matched patrols
+                            # Also create mappings for patrol_id, patrol_name, and subject/leader name
                             patrol_segment_ids = []
+                            segment_to_patrol_map = {}  # Maps segment_id -> patrol_id
+                            segment_to_patrol_name_map = {}  # Maps segment_id -> patrol_name/title
+                            segment_to_subject_map = {}  # Maps segment_id -> subject/leader name
+                            
                             for _, patrol in patrols_df.iterrows():
+                                patrol_id = patrol['id']
+                                patrol_name = patrol.get('title', patrol.get('serial_number', ''))
+                                
+                                # Extract leader/subject name from first segment
+                                leader_name = ''
                                 for segment in patrol.get('patrol_segments', []):
                                     if 'id' in segment:
-                                        patrol_segment_ids.append(segment['id'])
+                                        segment_id = segment['id']
+                                        patrol_segment_ids.append(segment_id)
+                                        segment_to_patrol_map[segment_id] = patrol_id
+                                        segment_to_patrol_name_map[segment_id] = patrol_name
+                                        
+                                        # Extract leader name if not already extracted
+                                        if not leader_name and 'leader' in segment:
+                                            leader_data = segment['leader']
+                                            if isinstance(leader_data, dict):
+                                                leader_name = leader_data.get('name', leader_data.get('username', ''))
+                                            else:
+                                                leader_name = str(leader_data) if leader_data else ''
+                                        
+                                        segment_to_subject_map[segment_id] = leader_name
                             
                             if not patrol_segment_ids:
                                 st.warning("No patrol segments found")
@@ -607,6 +630,11 @@ if st.session_state.authenticated:
                                         )
                                         
                                         if not events_df.empty:
+                                            # Add patrol_id, patrol_name, and patrol_leader from our mappings
+                                            events_df['patrol_id'] = segment_to_patrol_map.get(segment_id, '')
+                                            events_df['patrol_name'] = segment_to_patrol_name_map.get(segment_id, '')
+                                            events_df['patrol_leader'] = segment_to_subject_map.get(segment_id, '')
+                                            
                                             # Convert to GeoDataFrame with geometry from geojson
                                             def extract_geometry(row):
                                                 if 'geojson' in row and row['geojson']:
@@ -808,8 +836,9 @@ if st.session_state.authenticated:
                                         display_df = display_df.rename(columns=rename_mapping)
                                     
                                     # Reorder columns to put important ones first
-                                    preferred_order = ['event_id', 'serial_number', 'event_type', 'subject_name',
-                                                      'longitude', 'latitude', 'event_datetime',
+                                    preferred_order = ['event_id', 'patrol_id', 'patrol_name', 'patrol_leader', 
+                                                      'serial_number', 'event_type', 'subject_name', 
+                                                      'longitude', 'latitude', 'event_datetime', 
                                                       'priority', 'title', 'state', 
                                                       'updated_at', 'created_at', 'is_collection']
                                     
