@@ -924,7 +924,9 @@ else:
     2. Select a patrol type and patrol leader from the dropdown menu
     3. Choose your date range
     4. Click "Download patrol tracks"
-    5. Download the shapefile ZIP when ready
+    5. Check the preview, and download the shapefile ZIP when ready
+    6. Click "Extract patrol events" if required
+    7. Check the preview, and download the csv file when ready
     
     ---
     

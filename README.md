@@ -44,10 +44,12 @@ See [QUICKSTART.md](QUICKSTART.md) for detailed instructions.
 
 ## 📖 How to Use
 1. **Login** - Enter your EarthRanger credentials in the sidebar
-2. **Select patrol type** - Choose from your organization's patrol types
+2. **Select patrol type** - Choose from your organization's patrol types and patrol leader
 3. **Set date range** - Pick start and end dates
-4. **Download** - Click "Download patrol tracks" and preview the data
-5. **Export** - Download the shapefile ZIP for use in GIS software
+4. **Download tracks** - Click "Download patrol tracks"
+5. **Preview & export tracks** - Check the preview, and download the shapefile ZIP when ready
+6. **Extract events (optional)** - Click "Extract patrol events" if required
+7. **Preview & export events** - Check the preview, and download the csv file when ready
 
 ## 🛠️ Technology Stack
 - **[Streamlit](https://streamlit.io)** - Web application framework
