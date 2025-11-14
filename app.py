@@ -264,7 +264,7 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
 
 # Main app
 st.title("🗺️ Patrol shapefile downloader")
-st.markdown("Download patrol tracks from EarthRanger as shapefiles")
+st.markdown("Download patrol tracks from EarthRanger as shapefiles, with optional associated events")
 
 # Sidebar for authentication
 with st.sidebar:
@@ -277,7 +277,7 @@ with st.sidebar:
     st.header("🔐 EarthRanger login")
     
     if not st.session_state.authenticated:
-        server_input = st.text_input("Server URL", placeholder="server.pamdas.org")
+        server_input = st.text_input("Instance URL", placeholder="server.pamdas.org")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         
@@ -903,23 +903,25 @@ if st.session_state.authenticated:
     """)
 
 else:
-    st.info("👈 Please login using the sidebar to access the patrol download feature")
+    st.info("👈 Please login to your EarthRanger instance using the sidebar")
     
     # Show some information about the app
     st.markdown("""
     ### About this app
     
-    This application allows you to download patrol track data from EarthRanger as shapefiles.
+    This application allows you to download patrol track data from EarthRanger as shapefiles, as well as the patrols associated events as a csv.
     
     **Features:**
     - Secure authentication with EarthRanger
     - Filter by patrol types unique to your EarthRanger instance
-    - Download tracks as shapefiles in ZIP format
-    - Preview data before downloading
+    - Users will only be able to access the data for which they have permissions to view/export in your EarthRanger instance permission settings
+    - Download tracks as a shapefile (ZIP format)
+    - Download the associated events as a csv
+    - Preview all data before downloading
     
     **How to use:**
     1. Log in with your EarthRanger credentials in the sidebar
-    2. Select a patrol type from the dropdown menu
+    2. Select a patrol type and patrol leader from the dropdown menu
     3. Choose your date range
     4. Click "Download patrol tracks"
     5. Download the shapefile ZIP when ready
