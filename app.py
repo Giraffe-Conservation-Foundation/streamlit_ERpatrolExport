@@ -81,11 +81,18 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
         patrols_df['patrol_type_extracted'] = patrols_df.apply(get_patrol_type, axis=1)
         patrols_df['patrol_subject_extracted'] = patrols_df.apply(get_patrol_subject, axis=1)
         
-        # Filter by patrol_type
-        patrols_df = patrols_df[patrols_df['patrol_type_extracted'] == patrol_type_value].copy()
-        
-        if patrols_df.empty:
-            return None, f"No patrols found for type: {patrol_type_value}"
+        # Filter by patrol_type(s)
+        if patrol_type_value:
+            if isinstance(patrol_type_value, list):
+                # Multiple patrol types selected
+                patrols_df = patrols_df[patrols_df['patrol_type_extracted'].isin(patrol_type_value)].copy()
+                if patrols_df.empty:
+                    return None, f"No patrols found for types: {', '.join(patrol_type_value)}"
+            else:
+                # Single patrol type (backwards compatibility)
+                patrols_df = patrols_df[patrols_df['patrol_type_extracted'] == patrol_type_value].copy()
+                if patrols_df.empty:
+                    return None, f"No patrols found for type: {patrol_type_value}"
         
         # Filter by subject name(s) if specified
         if subject_name:
@@ -148,29 +155,32 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
         points_before_filter = len(points_gdf)
         
         if time_col and 'patrol_start_time' in points_gdf.columns and 'patrol_end_time' in points_gdf.columns:
-            # Ensure time column is datetime
-            if not pd.api.types.is_datetime64_any_dtype(points_gdf[time_col]):
-                points_gdf[time_col] = pd.to_datetime(points_gdf[time_col], utc=True)
-            
-            # Convert patrol_start_time and patrol_end_time from STRING to datetime
-            # These come as ISO format strings like "2025-10-25T04:59:42Z"
-            if points_gdf['patrol_start_time'].dtype == 'object':  # strings
-                points_gdf['patrol_start_time'] = pd.to_datetime(points_gdf['patrol_start_time'], utc=True)
-            if points_gdf['patrol_end_time'].dtype == 'object':  # strings
-                points_gdf['patrol_end_time'] = pd.to_datetime(points_gdf['patrol_end_time'], utc=True)
-            
-            # Ensure all are timezone-aware UTC
-            if points_gdf[time_col].dt.tz is None:
-                points_gdf[time_col] = points_gdf[time_col].dt.tz_localize('UTC')
-            if points_gdf['patrol_start_time'].dt.tz is None:
-                points_gdf['patrol_start_time'] = points_gdf['patrol_start_time'].dt.tz_localize('UTC')
-            if points_gdf['patrol_end_time'].dt.tz is None:
-                points_gdf['patrol_end_time'] = points_gdf['patrol_end_time'].dt.tz_localize('UTC')
-            
-            # Filter: keep only points where recorded time is between patrol start and end times
-            within_patrol = (points_gdf[time_col] >= points_gdf['patrol_start_time']) & \
-                           (points_gdf[time_col] <= points_gdf['patrol_end_time'])
-            points_gdf = points_gdf[within_patrol].copy()
+            try:
+                # Ensure time column is datetime
+                if not pd.api.types.is_datetime64_any_dtype(points_gdf[time_col]):
+                    points_gdf[time_col] = pd.to_datetime(points_gdf[time_col], utc=True)
+                
+                # Convert patrol_start_time and patrol_end_time from STRING to datetime
+                # These come as ISO format strings like "2025-10-25T04:59:42Z"
+                if points_gdf['patrol_start_time'].dtype == 'object':  # strings
+                    points_gdf['patrol_start_time'] = pd.to_datetime(points_gdf['patrol_start_time'], utc=True)
+                if points_gdf['patrol_end_time'].dtype == 'object':  # strings
+                    points_gdf['patrol_end_time'] = pd.to_datetime(points_gdf['patrol_end_time'], utc=True)
+                
+                # Ensure all are timezone-aware UTC
+                if points_gdf[time_col].dt.tz is None:
+                    points_gdf[time_col] = points_gdf[time_col].dt.tz_localize('UTC')
+                if points_gdf['patrol_start_time'].dt.tz is None:
+                    points_gdf['patrol_start_time'] = points_gdf['patrol_start_time'].dt.tz_localize('UTC')
+                if points_gdf['patrol_end_time'].dt.tz is None:
+                    points_gdf['patrol_end_time'] = points_gdf['patrol_end_time'].dt.tz_localize('UTC')
+                
+                # Filter: keep only points where recorded time is between patrol start and end times
+                within_patrol = (points_gdf[time_col] >= points_gdf['patrol_start_time']) & \
+                               (points_gdf[time_col] <= points_gdf['patrol_end_time'])
+                points_gdf = points_gdf[within_patrol].copy()
+            except Exception as e:
+                return None, "⚠️ No valid patrol data found within the selected date range and filters. Please check:\n• The date range contains patrols\n• The selected patrol type(s) are correct\n• The selected patrol leader(s) have patrols in this period"
         
         total_removed = points_before_filter - len(points_gdf)
         
@@ -323,11 +333,13 @@ if st.session_state.authenticated:
                 st.warning("No active patrol types found")
                 patrol_type = st.text_input("Enter patrol type value")
             else:
-                patrol_type = st.selectbox(
-                    "Select patrol type",
+                selected_patrol_types = st.multiselect(
+                    "Filter by patrol type(s) (optional)",
                     options=patrol_type_options,
-                    help="Choose the type of patrol to download"
+                    default=[],
+                    help="Select one or more patrol types, or leave empty for all"
                 )
+                patrol_type = selected_patrol_types if selected_patrol_types else None
         except Exception as e:
             st.error(f"Error loading patrol types: {e}")
             patrol_type = st.text_input("Enter patrol type value")
@@ -404,7 +416,7 @@ if st.session_state.authenticated:
         with st.spinner("Downloading patrol tracks..."):
             gdf, error = download_patrol_tracks(
                 st.session_state.er_io,
-                patrol_type,
+                patrol_type if patrol_type else None,
                 since,
                 until,
                 subject_name=subject_name_filter if subject_name_filter else None
@@ -922,7 +934,7 @@ if st.session_state.authenticated:
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2025) EarthRanger patrol shapefile downloader (v1.0.0). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2025) EarthRanger patrol shapefile downloader (v1.0.1). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
@@ -959,7 +971,7 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2025) EarthRanger patrol shapefile downloader (v1.0.0). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2025) EarthRanger patrol shapefile downloader (v1.0.1). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
