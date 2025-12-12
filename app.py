@@ -81,6 +81,13 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
         patrols_df['patrol_type_extracted'] = patrols_df.apply(get_patrol_type, axis=1)
         patrols_df['patrol_subject_extracted'] = patrols_df.apply(get_patrol_subject, axis=1)
         
+        # Remove patrols with None/empty patrol types to avoid processing errors
+        patrols_df = patrols_df[patrols_df['patrol_type_extracted'].notna()].copy()
+        patrols_df = patrols_df[patrols_df['patrol_type_extracted'] != ''].copy()
+        
+        if patrols_df.empty:
+            return None, "No patrols found with valid patrol types in the specified date range"
+        
         # Filter by patrol_type(s)
         if patrol_type_value:
             if isinstance(patrol_type_value, list):
@@ -158,14 +165,14 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
             try:
                 # Ensure time column is datetime
                 if not pd.api.types.is_datetime64_any_dtype(points_gdf[time_col]):
-                    points_gdf[time_col] = pd.to_datetime(points_gdf[time_col], utc=True)
+                    points_gdf[time_col] = pd.to_datetime(points_gdf[time_col], format='ISO8601', utc=True)
                 
                 # Convert patrol_start_time and patrol_end_time from STRING to datetime
-                # These come as ISO format strings like "2025-10-25T04:59:42Z"
+                # These come as ISO format strings like "2025-10-25T04:59:42Z" or with microseconds
                 if points_gdf['patrol_start_time'].dtype == 'object':  # strings
-                    points_gdf['patrol_start_time'] = pd.to_datetime(points_gdf['patrol_start_time'], utc=True)
+                    points_gdf['patrol_start_time'] = pd.to_datetime(points_gdf['patrol_start_time'], format='ISO8601', utc=True)
                 if points_gdf['patrol_end_time'].dtype == 'object':  # strings
-                    points_gdf['patrol_end_time'] = pd.to_datetime(points_gdf['patrol_end_time'], utc=True)
+                    points_gdf['patrol_end_time'] = pd.to_datetime(points_gdf['patrol_end_time'], format='ISO8601', utc=True)
                 
                 # Ensure all are timezone-aware UTC
                 if points_gdf[time_col].dt.tz is None:
@@ -315,46 +322,18 @@ with st.sidebar:
 
 # Main content - only show if authenticated
 if st.session_state.authenticated:
+    # Date range selection row - FIRST
+    st.subheader("1️⃣ Select date range")
     col1, col2 = st.columns(2)
     
     with col1:
-        # Get available patrol types - only show those with active patrols
-        try:
-            # Get all patrol types
-            patrol_types_df = st.session_state.er_io.get_patrol_types()
-            
-            # Filter to only active patrol types
-            if 'is_active' in patrol_types_df.columns:
-                patrol_types_df = patrol_types_df[patrol_types_df['is_active'] == True]
-            
-            patrol_type_options = patrol_types_df['value'].tolist()
-            
-            if not patrol_type_options:
-                st.warning("No active patrol types found")
-                patrol_type = st.text_input("Enter patrol type value")
-            else:
-                selected_patrol_types = st.multiselect(
-                    "Filter by patrol type(s) (optional)",
-                    options=patrol_type_options,
-                    default=[],
-                    help="Select one or more patrol types, or leave empty for all"
-                )
-                patrol_type = selected_patrol_types if selected_patrol_types else None
-        except Exception as e:
-            st.error(f"Error loading patrol types: {e}")
-            patrol_type = st.text_input("Enter patrol type value")
-    
-    # Date range selection row
-    col3, col4 = st.columns(2)
-    
-    with col3:
         start_date = st.date_input(
             "Start date",
             value=datetime.now() - timedelta(days=30),
             help="Beginning of date range"
         )
     
-    with col4:
+    with col2:
         end_date = st.date_input(
             "End date",
             value=datetime.now(),
@@ -365,49 +344,84 @@ if st.session_state.authenticated:
     since = datetime.combine(start_date, datetime.min.time()).isoformat()
     until = datetime.combine(end_date, datetime.max.time()).isoformat()
     
-    with col2:
-        # Optional dropdown filter for patrol leader name
-        with st.spinner("Loading patrol leaders..."):
-            try:
-                # Fetch a sample of patrols to get available leaders
-                sample_patrols = st.session_state.er_io.get_patrols(
-                    since=since,
-                    until=until,
-                    status=['done', 'active']
-                )
+    st.markdown("---")
+    st.subheader("2️⃣ Select filters (optional)")
+    
+    # Now load patrol types and leaders from actual patrols in the date range
+    col3, col4 = st.columns(2)
+    
+    with st.spinner("Loading available filters from patrol data..."):
+        try:
+            # Fetch patrols in the date range
+            sample_patrols = st.session_state.er_io.get_patrols(
+                since=since,
+                until=until,
+                status=['done', 'active']
+            )
+            
+            if not sample_patrols.empty:
+                # Extract patrol types from actual patrols
+                def get_patrol_type(row):
+                    if 'patrol_segments' in row and isinstance(row['patrol_segments'], list) and len(row['patrol_segments']) > 0:
+                        segment = row['patrol_segments'][0]
+                        if isinstance(segment, dict) and 'patrol_type' in segment:
+                            return segment['patrol_type']
+                    return None
                 
-                if not sample_patrols.empty:
-                    # Extract patrol leaders
-                    def get_patrol_subject(row):
-                        if 'patrol_segments' in row and isinstance(row['patrol_segments'], list):
-                            for segment in row['patrol_segments']:
-                                if isinstance(segment, dict):
-                                    leader = segment.get('leader', {})
-                                    if isinstance(leader, dict):
-                                        return leader.get('name', '')
-                        return ''
-                    
-                    sample_patrols['leader_name'] = sample_patrols.apply(get_patrol_subject, axis=1)
-                    leader_names = sorted(sample_patrols['leader_name'].dropna().unique().tolist())
-                    leader_names = [name for name in leader_names if name]  # Remove empty strings
-                    
+                # Extract patrol leaders from actual patrols
+                def get_patrol_subject(row):
+                    if 'patrol_segments' in row and isinstance(row['patrol_segments'], list):
+                        for segment in row['patrol_segments']:
+                            if isinstance(segment, dict):
+                                leader = segment.get('leader', {})
+                                if isinstance(leader, dict):
+                                    return leader.get('name', '')
+                    return ''
+                
+                sample_patrols['patrol_type_extracted'] = sample_patrols.apply(get_patrol_type, axis=1)
+                sample_patrols['leader_name'] = sample_patrols.apply(get_patrol_subject, axis=1)
+                
+                # Get unique patrol types (filter out None/empty)
+                patrol_types = sample_patrols['patrol_type_extracted'].dropna().unique().tolist()
+                patrol_types = sorted([pt for pt in patrol_types if pt and str(pt).strip()])
+                
+                # Get unique leader names (filter out empty)
+                leader_names = sample_patrols['leader_name'].dropna().unique().tolist()
+                leader_names = sorted([name for name in leader_names if name and str(name).strip()])
+                
+                with col3:
+                    if patrol_types:
+                        selected_patrol_types = st.multiselect(
+                            "Filter by patrol type(s) (optional)",
+                            options=patrol_types,
+                            default=patrol_types,
+                            help="Select one or more patrol types, or leave empty for all"
+                        )
+                        patrol_type = selected_patrol_types if selected_patrol_types else None
+                    else:
+                        st.warning("No patrol types found in date range")
+                        patrol_type = None
+                
+                with col4:
                     if leader_names:
                         selected_leaders = st.multiselect(
                             "Filter by patrol leader(s) (optional)",
                             options=leader_names,
-                            default=[],
+                            default=leader_names,
                             help="Select one or more patrol leaders, or leave empty for all"
                         )
                         subject_name_filter = selected_leaders if selected_leaders else None
                     else:
+                        st.warning("No patrol leaders found in date range")
                         subject_name_filter = None
-                        st.info("No patrol leaders found in date range")
-                else:
-                    subject_name_filter = None
-                    st.info("No patrols found in date range")
-            except Exception as e:
+            else:
+                st.info("No patrols found in the selected date range")
+                patrol_type = None
                 subject_name_filter = None
-                st.warning(f"Could not load patrol leaders: {e}")
+        except Exception as e:
+            st.error(f"Error loading filters: {e}")
+            patrol_type = None
+            subject_name_filter = None
     
     st.markdown("---")
     
@@ -416,7 +430,7 @@ if st.session_state.authenticated:
         with st.spinner("Downloading patrol tracks..."):
             gdf, error = download_patrol_tracks(
                 st.session_state.er_io,
-                patrol_type if patrol_type else None,
+                patrol_type,
                 since,
                 until,
                 subject_name=subject_name_filter if subject_name_filter else None
@@ -508,7 +522,14 @@ if st.session_state.authenticated:
                     start_str = start_date.strftime('%y%m%d')
                     end_str = end_date.strftime('%y%m%d')
                     # Clean patrol type for filename (remove spaces, special chars)
-                    patrol_type_clean = "".join(c if c.isalnum() else "_" for c in patrol_type)
+                    if patrol_type:
+                        if isinstance(patrol_type, list):
+                            # Multiple patrol types - join them
+                            patrol_type_clean = "_".join("".join(c if c.isalnum() else "_" for c in pt) for pt in patrol_type[:3])  # Limit to first 3 to avoid too long filename
+                        else:
+                            patrol_type_clean = "".join(c if c.isalnum() else "_" for c in patrol_type)
+                    else:
+                        patrol_type_clean = "all_patrols"
                     base_filename = f"{patrol_type_clean}_{start_str}_{end_str}"
                     
                     # Prepare shapefile-friendly column names (max 10 chars)
