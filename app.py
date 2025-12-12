@@ -688,19 +688,37 @@ if st.session_state.authenticated:
                                                 event_ids = events_gdf['id'].tolist()
                                                 status_text.text(f"Segment {idx + 1}/{len(patrol_segment_ids)}: Fetching details for {len(event_ids)} events...")
                                                 
-                                                # Fetch events with details using event IDs
-                                                detailed_events = st.session_state.er_io.get_events(
-                                                    event_ids=event_ids,
-                                                    include_details=True,
-                                                    include_notes=True
-                                                )
+                                                # Batch event IDs to avoid URL length limits (414 error)
+                                                # Process in chunks of 50 event IDs at a time
+                                                batch_size = 50
+                                                detailed_events_list = []
                                                 
-                                                if not detailed_events.empty and 'event_details' in detailed_events.columns:
-                                                    # Merge event_details back into events_gdf
-                                                    # Reset index to use 'id' for merging
-                                                    detailed_events_subset = detailed_events.reset_index()[['id', 'event_details']]
-                                                    events_gdf = events_gdf.merge(detailed_events_subset, on='id', how='left')
-                                                    has_details = True
+                                                for batch_idx in range(0, len(event_ids), batch_size):
+                                                    batch_event_ids = event_ids[batch_idx:batch_idx + batch_size]
+                                                    try:
+                                                        # Fetch events with details using event IDs
+                                                        detailed_events_batch = st.session_state.er_io.get_events(
+                                                            event_ids=batch_event_ids,
+                                                            include_details=True,
+                                                            include_notes=True
+                                                        )
+                                                        if not detailed_events_batch.empty:
+                                                            detailed_events_list.append(detailed_events_batch)
+                                                    except Exception as batch_err:
+                                                        st.warning(f"Could not fetch details for event batch {batch_idx//batch_size + 1}: {str(batch_err)[:100]}")
+                                                
+                                                # Combine all batches
+                                                if detailed_events_list:
+                                                    detailed_events = pd.concat(detailed_events_list, ignore_index=True)
+                                                    
+                                                    if not detailed_events.empty and 'event_details' in detailed_events.columns:
+                                                        # Merge event_details back into events_gdf
+                                                        # Reset index to use 'id' for merging
+                                                        detailed_events_subset = detailed_events.reset_index()[['id', 'event_details']]
+                                                        events_gdf = events_gdf.merge(detailed_events_subset, on='id', how='left')
+                                                        has_details = True
+                                                    else:
+                                                        has_details = False
                                                 else:
                                                     has_details = False
                                             else:
