@@ -977,11 +977,277 @@ if st.session_state.authenticated:
     else:
         st.info("👆 Download patrol tracks first to enable event extraction")
     
+    # All Events extraction section
+    st.markdown("---")
+    st.subheader("📊 Extract all events")
+    st.markdown("Extract all events by event type from the selected date range")
+    
+    # Get available event types
+    try:
+        # Fetch a sample of events to get event types
+        with st.spinner("Loading available event types..."):
+            try:
+                # Get events from the date range to determine event types
+                sample_events = st.session_state.er_io.get_events(
+                    since=since,
+                    until=until,
+                    include_details=True
+                )
+                
+                if not sample_events.empty and 'event_type' in sample_events.columns:
+                    # Get unique event types
+                    available_event_types = sorted(sample_events['event_type'].unique())
+                    
+                    st.write(f"Found {len(available_event_types)} event type(s) in the selected date range")
+                    
+                    # Multi-select for event types
+                    selected_event_types = st.multiselect(
+                        "Select event type(s) to export:",
+                        options=available_event_types,
+                        default=None,
+                        help="Select one or more event types to export"
+                    )
+                    
+                    # Button to extract events
+                    if selected_event_types:
+                        if st.button("📥 Export selected events", type="primary", use_container_width=True):
+                            with st.spinner(f"Extracting {len(selected_event_types)} event type(s)..."):
+                                try:
+                                    # Filter sample events by selected types
+                                    filtered_events = sample_events[sample_events['event_type'].isin(selected_event_types)].copy()
+                                    
+                                    if filtered_events.empty:
+                                        st.warning("No events found for the selected event types")
+                                    else:
+                                        st.info(f"Found {len(filtered_events)} event(s) matching the selected types")
+                                        
+                                        # Check if we need to fetch more details or if we already have them
+                                        # The sample_events already has include_details=True, so check if event_details exists
+                                        if 'event_details' in filtered_events.columns:
+                                            # We already have the details, use filtered_events directly
+                                            events_detailed = filtered_events.copy()
+                                            st.info(f"Processing {len(events_detailed)} event(s) with full details...")
+                                        else:
+                                            # Need to fetch full details
+                                            # Check for id column
+                                            id_col = None
+                                            for possible_id in ['id', 'event_id', 'serial_number']:
+                                                if possible_id in filtered_events.columns:
+                                                    id_col = possible_id
+                                                    break
+                                            
+                                            if not id_col:
+                                                st.error("Cannot find event ID column in the data")
+                                                st.stop()
+                                            
+                                            event_ids = filtered_events[id_col].tolist()
+                                            event_ids = [eid for eid in event_ids if eid and pd.notna(eid)]
+                                            
+                                            if event_ids:
+                                                st.info(f"Fetching detailed information for {len(event_ids)} event(s)...")
+                                                
+                                                # Batch event IDs to avoid URL length limits
+                                                batch_size = 50
+                                                detailed_events_list = []
+                                                progress_bar = st.progress(0)
+                                                
+                                                for batch_idx in range(0, len(event_ids), batch_size):
+                                                    batch_event_ids = event_ids[batch_idx:batch_idx + batch_size]
+                                                    try:
+                                                        detailed_events_batch = st.session_state.er_io.get_events(
+                                                            event_ids=batch_event_ids,
+                                                            include_details=True,
+                                                            include_notes=True
+                                                        )
+                                                        if not detailed_events_batch.empty:
+                                                            detailed_events_list.append(detailed_events_batch)
+                                                    except Exception as batch_err:
+                                                        st.warning(f"Could not fetch details for batch {batch_idx//batch_size + 1}: {str(batch_err)[:100]}")
+                                                    
+                                                    progress_bar.progress(min(1.0, (batch_idx + batch_size) / len(event_ids)))
+                                                
+                                                progress_bar.empty()
+                                                
+                                                if detailed_events_list:
+                                                    events_detailed = pd.concat(detailed_events_list, ignore_index=True)
+                                                else:
+                                                    st.warning("No detailed events could be retrieved")
+                                                    events_detailed = None
+                                            else:
+                                                st.warning("No valid event IDs found")
+                                                events_detailed = None
+                                        
+                                        if events_detailed is not None and not events_detailed.empty:
+                                            st.success(f"✅ Successfully extracted {len(events_detailed)} event(s)!")
+                                            
+                                            # Convert to GeoDataFrame with geometry from geojson
+                                            def extract_geometry(row):
+                                                if 'geojson' in row and row['geojson']:
+                                                    try:
+                                                        if isinstance(row['geojson'], dict):
+                                                            return shape(row['geojson'])
+                                                    except:
+                                                        pass
+                                                return None
+                                            
+                                            events_detailed['geometry'] = events_detailed.apply(extract_geometry, axis=1)
+                                            
+                                            # Create GeoDataFrame (even if some don't have geometry)
+                                            events_gdf = gpd.GeoDataFrame(events_detailed, geometry='geometry', crs=4326)
+                                            
+                                            # Extract coordinates from geometry
+                                            if 'geometry' in events_gdf.columns:
+                                                events_gdf['longitude'] = events_gdf.geometry.apply(lambda g: g.x if g else None)
+                                                events_gdf['latitude'] = events_gdf.geometry.apply(lambda g: g.y if g else None)
+                                            
+                                            # Extract time from geojson.properties.datetime if time column doesn't exist
+                                            if 'time' not in events_gdf.columns and 'geojson' in events_gdf.columns:
+                                                def extract_datetime(geojson):
+                                                    if isinstance(geojson, dict):
+                                                        props = geojson.get('properties', {})
+                                                        if isinstance(props, dict):
+                                                            dt_str = props.get('datetime')
+                                                            if dt_str:
+                                                                return pd.to_datetime(dt_str, utc=True)
+                                                    return None
+                                                events_gdf['time'] = events_gdf['geojson'].apply(extract_datetime)
+                                            
+                                            # Extract reported_by name (subject_name)
+                                            if 'reported_by' in events_gdf.columns:
+                                                events_gdf['subject_name'] = events_gdf['reported_by'].apply(
+                                                    lambda x: x.get('name', '') if isinstance(x, dict) else ''
+                                                )
+                                            
+                                            # Unnest event_details - FULLY EXPLODE THE DATA
+                                            if 'event_details' in events_gdf.columns:
+                                                # Extract event_details fields into separate columns
+                                                event_details_df = pd.json_normalize(events_gdf['event_details'])
+                                                # Add prefix to avoid column name conflicts
+                                                event_details_df.columns = ['detail_' + col for col in event_details_df.columns]
+                                                # Combine with main dataframe - preserve geometry
+                                                geometry_col = events_gdf.geometry
+                                                events_gdf = pd.concat([events_gdf.reset_index(drop=True), event_details_df], axis=1)
+                                                # Restore as GeoDataFrame
+                                                events_gdf = gpd.GeoDataFrame(events_gdf, geometry=geometry_col.reset_index(drop=True), crs=4326)
+                                            
+                                            # Display data preview
+                                            st.subheader("Events data preview")
+                                            # Create display DataFrame without geometry and geojson
+                                            display_cols = [col for col in events_gdf.columns if col not in ['geometry', 'geojson']]
+                                            display_df = events_gdf[display_cols].copy()
+                                            
+                                            # Clean up the display
+                                            cols_to_remove = ['level_8', 'index', 'location', 'reported_by', 'event_details', 
+                                                             'geojson', 'attributes', 'notes', 'patrols', 'patrol_segments',
+                                                             'is_contained_in', 'related_subjects',
+                                                             'location_lat', 'location_lon', 'message', 'provenance',
+                                                             'event_category', 'priority_label', 'comment', 'end_time',
+                                                             'sort_at', 'icon_id', 'url', 'image_url', 'external_source']
+                                            display_df = display_df.drop(columns=[col for col in cols_to_remove if col in display_df.columns])
+                                            
+                                            # Rename columns for better readability
+                                            rename_mapping = {
+                                                'id': 'event_id',
+                                                'time': 'event_datetime'
+                                            }
+                                            rename_mapping = {k: v for k, v in rename_mapping.items() if k in display_df.columns}
+                                            if rename_mapping:
+                                                display_df = display_df.rename(columns=rename_mapping)
+                                            
+                                            # Reorder columns to put important ones first
+                                            preferred_order = ['event_id', 'serial_number', 'event_type', 'subject_name', 
+                                                              'longitude', 'latitude', 'event_datetime', 
+                                                              'priority', 'title', 'state', 
+                                                              'updated_at', 'created_at', 'is_collection']
+                                            
+                                            # Add all detail_ columns after the main columns
+                                            detail_cols = sorted([col for col in display_df.columns if col.startswith('detail_')])
+                                            preferred_order.extend(detail_cols)
+                                            
+                                            # Get columns in preferred order (only if they exist)
+                                            ordered_cols = [col for col in preferred_order if col in display_df.columns]
+                                            # Add remaining columns
+                                            remaining_cols = [col for col in display_df.columns if col not in ordered_cols]
+                                            display_df = display_df[ordered_cols + remaining_cols]
+                                            
+                                            st.dataframe(display_df)
+                                            
+                                            # Show summary statistics
+                                            col_e1, col_e2, col_e3 = st.columns(3)
+                                            with col_e1:
+                                                st.metric("Total events", len(events_gdf))
+                                            with col_e2:
+                                                if 'event_type' in events_gdf.columns:
+                                                    st.metric("Event types", events_gdf['event_type'].nunique())
+                                            with col_e3:
+                                                if 'subject_name' in events_gdf.columns:
+                                                    st.metric("Unique reporters", events_gdf['subject_name'].nunique())
+                                            
+                                            # Save to CSV
+                                            try:
+                                                start_str = start_date.strftime('%y%m%d')
+                                                end_str = end_date.strftime('%y%m%d')
+                                                event_type_clean = "_".join([c if c.isalnum() else "_" for c in "_".join(selected_event_types)])
+                                                base_filename = f"all_events_{event_type_clean}_{start_str}_{end_str}"
+                                                
+                                                # Prepare CSV export - remove geometry and geojson columns
+                                                events_export = events_gdf.copy()
+                                                cols_to_remove_export = ['geometry', 'geojson']
+                                                events_export = events_export.drop(columns=[col for col in cols_to_remove_export if col in events_export.columns])
+                                                
+                                                # Remove same columns as display
+                                                cols_to_remove_from_export = ['level_8', 'index', 'location', 'reported_by', 'event_details', 
+                                                                             'geojson', 'attributes', 'notes', 'patrols', 
+                                                                             'patrol_segments', 'is_contained_in', 'related_subjects', 
+                                                                             'location_lat', 'location_lon', 
+                                                                             'message', 'provenance', 'event_category', 'priority_label', 
+                                                                             'comment', 'end_time', 'sort_at', 'icon_id', 'url', 
+                                                                             'image_url', 'external_source']
+                                                events_export = events_export.drop(columns=[col for col in cols_to_remove_from_export if col in events_export.columns])
+                                                
+                                                # Apply same renaming as display
+                                                rename_mapping = {
+                                                    'id': 'event_id',
+                                                    'time': 'event_datetime'
+                                                }
+                                                rename_mapping = {k: v for k, v in rename_mapping.items() if k in events_export.columns}
+                                                if rename_mapping:
+                                                    events_export = events_export.rename(columns=rename_mapping)
+                                                
+                                                # Convert to CSV
+                                                csv_data = events_export.to_csv(index=False)
+                                                
+                                                st.download_button(
+                                                    label="📥 Download Events CSV",
+                                                    data=csv_data,
+                                                    file_name=f"{base_filename}.csv",
+                                                    mime="text/csv",
+                                                    use_container_width=True
+                                                )
+                                            except Exception as e:
+                                                st.error(f"❌ Error creating events CSV: {e}")
+                                        else:
+                                            st.warning("No detailed events could be retrieved")
+                                except Exception as e:
+                                    st.error(f"❌ Error extracting events: {e}")
+                                    import traceback
+                                    st.error(traceback.format_exc())
+                    else:
+                        st.info("👆 Select at least one event type to export")
+                else:
+                    st.info("No events found in the selected date range")
+            except Exception as e:
+                st.error(f"❌ Error loading event types: {e}")
+                import traceback
+                st.error(traceback.format_exc())
+    except Exception as e:
+        st.error(f"❌ Error in event extraction section: {e}")
+    
     # Citation section at bottom of main area
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2025) EarthRanger patrol shapefile downloader (v1.0.2). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.0). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
@@ -1018,7 +1284,7 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2025) EarthRanger patrol shapefile downloader (v1.0.2). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.0). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
