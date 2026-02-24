@@ -23,21 +23,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Usage analytics via Plausible (privacy-friendly, no cookies, no personal data collected, GDPR-safe)
-# Tracks visit counts only - used to measure tool reach and impact, not individual users
-if "plausible_loaded" not in st.session_state:
-    st.session_state["plausible_loaded"] = True
-    st.html(
-        """
-        <!-- Privacy-friendly analytics by Plausible -->
-        <script async src="https://plausible.io/js/pa-hD133QG4prbV_DTIN_zay.js"></script>
-        <script>
-          window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
-          plausible.init()
-        </script>
-        """
-    )
-
 # Initialize session state for authentication
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
