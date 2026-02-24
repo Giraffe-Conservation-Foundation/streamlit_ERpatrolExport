@@ -23,6 +23,18 @@ st.set_page_config(
     layout="wide"
 )
 
+# Usage analytics via GoatCounter (free, privacy-friendly, no cookies, GDPR-safe)
+# Sign up at https://www.goatcounter.com and replace YOUR_CODE with your chosen site code
+# Dashboard available at https://YOUR_CODE.goatcounter.com
+if "goatcounter_loaded" not in st.session_state:
+    st.session_state["goatcounter_loaded"] = True
+    st.html(
+        """
+        <script data-goatcounter="https://gcfstreamlit.goatcounter.com/count"
+                async src="//gc.zgo.at/count.js"></script>
+        """
+    )
+
 # Initialize session state for authentication
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
