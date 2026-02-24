@@ -7,6 +7,7 @@ import tempfile
 import os
 import zipfile
 from shapely.geometry import LineString, shape
+import requests as _requests
 
 # Optional imports for map
 try:
@@ -24,16 +25,20 @@ st.set_page_config(
 )
 
 # Usage analytics via GoatCounter (free, privacy-friendly, no cookies, GDPR-safe)
-# Sign up at https://www.goatcounter.com and replace YOUR_CODE with your chosen site code
-# Dashboard available at https://YOUR_CODE.goatcounter.com
+# Calls GoatCounter's public count endpoint server-side - no API key required
+# Bypasses Streamlit's sandboxed iframe which blocks browser-side JS trackers
+# Dashboard: https://gcfstreamlit.goatcounter.com
 if "goatcounter_loaded" not in st.session_state:
     st.session_state["goatcounter_loaded"] = True
-    st.html(
-        """
-        <script data-goatcounter="https://gcfstreamlit.goatcounter.com/count"
-                async src="//gc.zgo.at/count.js"></script>
-        """
-    )
+    try:
+        _requests.get(
+            "https://gcfstreamlit.goatcounter.com/count",
+            params={"p": "/", "t": "Patrol Shapefile Downloader"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; StreamlitApp/1.0)"},
+            timeout=2
+        )
+    except Exception:
+        pass  # Never let analytics errors affect the app
 
 # Initialize session state for authentication
 if 'authenticated' not in st.session_state:
