@@ -58,6 +58,62 @@ def authenticate_earthranger(server, username, password):
     except Exception as e:
         return None, str(e)
 
+def build_subject_lookup(er_io):
+    """Fetch all subjects and return a {uuid: display_name} dict for UUID resolution."""
+    try:
+        subjects_df = er_io.get_subjects(include_inactive=True)
+        if subjects_df is not None and not subjects_df.empty and 'id' in subjects_df.columns and 'name' in subjects_df.columns:
+            return dict(zip(subjects_df['id'].astype(str), subjects_df['name'].astype(str)))
+    except Exception:
+        pass
+    return {}
+
+
+import re as _re
+_UUID_RE = _re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', _re.I)
+
+def resolve_uuid_columns(df, uuid_to_name, col_prefix='detail_'):
+    """
+    For every column whose name starts with col_prefix and whose values look like
+    UUIDs, insert a companion '<col>_name' column immediately after it containing
+    the resolved display name (or empty string if not found).
+    Only adds the name column when at least one value resolves successfully.
+    """
+    if not uuid_to_name:
+        return df
+
+    def _is_uuid(val):
+        return isinstance(val, str) and bool(_UUID_RE.match(val.strip()))
+
+    cols = list(df.columns)
+    inserts = []  # list of (position, new_col_name, series)
+
+    for i, col in enumerate(cols):
+        if not col.endswith('_name') and col.startswith(col_prefix):
+            sample = df[col].dropna()
+            if sample.empty:
+                continue
+            uuid_frac = sample.apply(_is_uuid).mean()
+            if uuid_frac >= 0.5:  # majority look like UUIDs
+                name_series = df[col].apply(
+                    lambda v: uuid_to_name.get(str(v).strip(), '') if isinstance(v, str) else ''
+                )
+                if name_series.str.len().sum() > 0:  # at least one resolved
+                    inserts.append((i + 1, col + '_name', name_series))
+
+    if not inserts:
+        return df
+
+    # Rebuild column order with injected name columns
+    result = df.copy()
+    offset = 0
+    for pos, name_col, series in inserts:
+        if name_col not in result.columns:
+            result.insert(pos + offset, name_col, series.values)
+            offset += 1
+    return result
+
+
 def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=None):
     """Download patrol tracks as GeoDataFrame and convert to LineStrings"""
     try:
@@ -791,11 +847,15 @@ if st.session_state.authenticated:
                                             return None
                                         events_combined['time'] = events_combined['geojson'].apply(extract_datetime)
                                     
-                                    # Extract reported_by name (subject_name)
+                                    # Extract reported_by name and UUID (subject_name / subject_id)
                                     if 'reported_by' in events_combined.columns:
                                         events_combined['subject_name'] = events_combined['reported_by'].apply(
                                             lambda x: x.get('name', '') if isinstance(x, dict) else ''
                                         )
+                                        if 'subject_id' not in events_combined.columns:
+                                            events_combined['subject_id'] = events_combined['reported_by'].apply(
+                                                lambda x: x.get('id', '') if isinstance(x, dict) else ''
+                                            )
                                     
                                     # Unnest event_details
                                     if 'event_details' in events_combined.columns:
@@ -808,7 +868,12 @@ if st.session_state.authenticated:
                                         events_combined = pd.concat([events_combined.reset_index(drop=True), event_details_df], axis=1)
                                         # Restore as GeoDataFrame
                                         events_combined = gpd.GeoDataFrame(events_combined, geometry=geometry_col.reset_index(drop=True), crs=4326)
-                                    
+
+                                    # Resolve UUIDs in detail_ columns to display names
+                                    with st.spinner("Resolving subject names for event detail fields..."):
+                                        uuid_to_name = build_subject_lookup(st.session_state.er_io)
+                                    events_combined = resolve_uuid_columns(events_combined, uuid_to_name, col_prefix='')
+
                                     # Extract coordinates from location dict if it exists
                                     if 'location' in events_combined.columns:
                                         events_combined['location_lat'] = events_combined['location'].apply(
@@ -912,10 +977,10 @@ if st.session_state.authenticated:
                                         display_df = display_df.rename(columns=rename_mapping)
                                     
                                     # Reorder columns to put important ones first
-                                    preferred_order = ['event_id', 'patrol_id', 'patrol_name', 'patrol_leader', 
-                                                      'serial_number', 'event_type', 'subject_name', 
-                                                      'longitude', 'latitude', 'event_datetime', 
-                                                      'priority', 'title', 'state', 
+                                    preferred_order = ['event_id', 'patrol_id', 'patrol_name', 'patrol_leader',
+                                                      'serial_number', 'event_type', 'subject_name', 'subject_id',
+                                                      'longitude', 'latitude', 'event_datetime',
+                                                      'priority', 'title', 'state',
                                                       'updated_at', 'created_at', 'is_collection']
                                     
                                     # Add all detail_ columns after the main columns
@@ -1129,11 +1194,15 @@ if st.session_state.authenticated:
                                                     return None
                                                 events_gdf['time'] = events_gdf['geojson'].apply(extract_datetime)
                                             
-                                            # Extract reported_by name (subject_name)
+                                            # Extract reported_by name and UUID (subject_name / subject_id)
                                             if 'reported_by' in events_gdf.columns:
                                                 events_gdf['subject_name'] = events_gdf['reported_by'].apply(
                                                     lambda x: x.get('name', '') if isinstance(x, dict) else ''
                                                 )
+                                                if 'subject_id' not in events_gdf.columns:
+                                                    events_gdf['subject_id'] = events_gdf['reported_by'].apply(
+                                                        lambda x: x.get('id', '') if isinstance(x, dict) else ''
+                                                    )
                                             
                                             # Unnest event_details - FULLY EXPLODE THE DATA
                                             if 'event_details' in events_gdf.columns:
@@ -1172,6 +1241,11 @@ if st.session_state.authenticated:
                                                         crs=4326
                                                     )
 
+                                            # Resolve UUIDs in detail_ columns to display names
+                                            with st.spinner("Resolving subject names for event detail fields..."):
+                                                uuid_to_name = build_subject_lookup(st.session_state.er_io)
+                                            events_gdf = resolve_uuid_columns(events_gdf, uuid_to_name, col_prefix='')
+
                                             # Display data preview
                                             st.subheader("Events data preview")
                                             # Create display DataFrame without geometry and geojson
@@ -1197,9 +1271,9 @@ if st.session_state.authenticated:
                                                 display_df = display_df.rename(columns=rename_mapping)
                                             
                                             # Reorder columns to put important ones first
-                                            preferred_order = ['event_id', 'serial_number', 'event_type', 'subject_name', 
-                                                              'longitude', 'latitude', 'event_datetime', 
-                                                              'priority', 'title', 'state', 
+                                            preferred_order = ['event_id', 'serial_number', 'event_type', 'subject_name', 'subject_id',
+                                                              'longitude', 'latitude', 'event_datetime',
+                                                              'priority', 'title', 'state',
                                                               'updated_at', 'created_at', 'is_collection']
                                             
                                             # Add all detail_ columns, then any unnested item columns (e.g. giraffe_*)
@@ -1292,7 +1366,7 @@ if st.session_state.authenticated:
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.1). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.2). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
@@ -1329,7 +1403,7 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.1). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.2). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
