@@ -1147,6 +1147,31 @@ if st.session_state.authenticated:
                                                 # Restore as GeoDataFrame
                                                 events_gdf = gpd.GeoDataFrame(events_gdf, geometry=geometry_col.reset_index(drop=True), crs=4326)
                                             
+                                            # Unnest any detail_ columns that contain lists of dicts (e.g. detail_Herd)
+                                            list_dict_cols = [
+                                                col for col in events_gdf.columns
+                                                if col.startswith('detail_') and events_gdf[col].apply(
+                                                    lambda x: isinstance(x, list) and len(x) > 0 and isinstance(x[0], dict)
+                                                ).any()
+                                            ]
+                                            if list_dict_cols:
+                                                for col in list_dict_cols:
+                                                    # Normalise empty/null to [{}] so rows are kept with NaN fields
+                                                    events_gdf[col] = events_gdf[col].apply(
+                                                        lambda x: x if (isinstance(x, list) and len(x) > 0) else [{}]
+                                                    )
+                                                    # Explode: one row per item in the list
+                                                    events_gdf = events_gdf.explode(col, ignore_index=True)
+                                                    # Normalise the dict into flat columns
+                                                    nested_df = pd.json_normalize(events_gdf[col].apply(
+                                                        lambda x: x if isinstance(x, dict) else {}
+                                                    ))
+                                                    events_gdf = gpd.GeoDataFrame(
+                                                        pd.concat([events_gdf.drop(columns=[col]).reset_index(drop=True), nested_df], axis=1),
+                                                        geometry='geometry',
+                                                        crs=4326
+                                                    )
+
                                             # Display data preview
                                             st.subheader("Events data preview")
                                             # Create display DataFrame without geometry and geojson
@@ -1177,9 +1202,12 @@ if st.session_state.authenticated:
                                                               'priority', 'title', 'state', 
                                                               'updated_at', 'created_at', 'is_collection']
                                             
-                                            # Add all detail_ columns after the main columns
+                                            # Add all detail_ columns, then any unnested item columns (e.g. giraffe_*)
                                             detail_cols = sorted([col for col in display_df.columns if col.startswith('detail_')])
                                             preferred_order.extend(detail_cols)
+                                            item_cols = sorted([col for col in display_df.columns
+                                                                if not col.startswith('detail_') and col not in preferred_order])
+                                            preferred_order.extend(item_cols)
                                             
                                             # Get columns in preferred order (only if they exist)
                                             ordered_cols = [col for col in preferred_order if col in display_df.columns]
@@ -1264,7 +1292,7 @@ if st.session_state.authenticated:
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.0). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.1). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
@@ -1301,7 +1329,7 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.0). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.1). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
     
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
     
