@@ -1204,6 +1204,12 @@ if st.session_state.authenticated:
                                                         lambda x: x.get('id', '') if isinstance(x, dict) else ''
                                                     )
 
+                                            # DEBUG - remove after diagnosis
+                                            st.write("DEBUG: events_gdf shape before orphan fix:", events_gdf.shape)
+                                            st.write("DEBUG: columns:", list(events_gdf.columns))
+                                            _debug_cols = [c for c in ['serial_number', 'time', 'event_type'] if c in events_gdf.columns]
+                                            st.write("DEBUG: key col values:", events_gdf[_debug_cols].to_dict('records'))
+
                                             # Merge repeat-group "orphan" child rows with their parent.
                                             # Must run BEFORE event_details normalisation so the list-of-dicts
                                             # explode never double-processes individual-level data.
@@ -1221,6 +1227,7 @@ if st.session_state.authenticated:
                                                 _orphan = events_gdf[_id_check].apply(
                                                     lambda x: pd.isna(x) or (isinstance(x, str) and x.strip() == '')
                                                 )
+                                                st.write("DEBUG: _id_check col =", _id_check, "| orphan mask =", _orphan.tolist())
                                                 if _orphan.any() and not _orphan.all():
                                                     # Forward-fill event metadata onto orphan child rows only
                                                     _meta = [c for c in [
