@@ -1257,13 +1257,19 @@ if st.session_state.authenticated:
 
                                             # Unnest event_details - FULLY EXPLODE THE DATA
                                             if 'event_details' in events_gdf.columns:
+                                                # DEBUG
+                                                st.write("DEBUG event_details type:", type(events_gdf['event_details'].iloc[0]).__name__)
+                                                st.write("DEBUG event_details value:", str(events_gdf['event_details'].iloc[0])[:500])
                                                 # Extract event_details fields into separate columns
                                                 event_details_df = pd.json_normalize(events_gdf['event_details'])
+                                                st.write("DEBUG event_details_df shape:", event_details_df.shape)
+                                                st.write("DEBUG event_details_df cols:", list(event_details_df.columns))
                                                 # Add prefix to avoid column name conflicts
                                                 event_details_df.columns = ['detail_' + col for col in event_details_df.columns]
                                                 # Combine with main dataframe - preserve geometry
                                                 geometry_col = events_gdf.geometry
                                                 events_gdf = pd.concat([events_gdf.reset_index(drop=True), event_details_df], axis=1)
+                                                st.write("DEBUG after concat shape:", events_gdf.shape)
                                                 # Restore as GeoDataFrame
                                                 events_gdf = gpd.GeoDataFrame(events_gdf, geometry=geometry_col.reset_index(drop=True), crs=4326)
                                             
