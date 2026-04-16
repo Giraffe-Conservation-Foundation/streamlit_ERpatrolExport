@@ -1204,12 +1204,6 @@ if st.session_state.authenticated:
                                                         lambda x: x.get('id', '') if isinstance(x, dict) else ''
                                                     )
 
-                                            # DEBUG - remove after diagnosis
-                                            st.write("DEBUG: events_gdf shape before orphan fix:", events_gdf.shape)
-                                            st.write("DEBUG: columns:", list(events_gdf.columns))
-                                            _debug_cols = [c for c in ['serial_number', 'time', 'event_type'] if c in events_gdf.columns]
-                                            st.write("DEBUG: key col values:", events_gdf[_debug_cols].to_dict('records'))
-
                                             # Merge repeat-group "orphan" child rows with their parent.
                                             # Must run BEFORE event_details normalisation so the list-of-dicts
                                             # explode never double-processes individual-level data.
@@ -1227,7 +1221,6 @@ if st.session_state.authenticated:
                                                 _orphan = events_gdf[_id_check].apply(
                                                     lambda x: pd.isna(x) or (isinstance(x, str) and x.strip() == '')
                                                 )
-                                                st.write("DEBUG: _id_check col =", _id_check, "| orphan mask =", _orphan.tolist())
                                                 if _orphan.any() and not _orphan.all():
                                                     # Forward-fill event metadata onto orphan child rows only
                                                     _meta = [c for c in [
@@ -1257,19 +1250,18 @@ if st.session_state.authenticated:
 
                                             # Unnest event_details - FULLY EXPLODE THE DATA
                                             if 'event_details' in events_gdf.columns:
-                                                # DEBUG
-                                                st.write("DEBUG event_details type:", type(events_gdf['event_details'].iloc[0]).__name__)
-                                                st.write("DEBUG event_details value:", str(events_gdf['event_details'].iloc[0])[:500])
                                                 # Extract event_details fields into separate columns
                                                 event_details_df = pd.json_normalize(events_gdf['event_details'])
-                                                st.write("DEBUG event_details_df shape:", event_details_df.shape)
-                                                st.write("DEBUG event_details_df cols:", list(event_details_df.columns))
+                                                # Reset index so it aligns with events_gdf after reset_index below.
+                                                # pd.json_normalize preserves the input Series index, which may not
+                                                # start at 0 — mismatched indices cause pd.concat(axis=1) to create
+                                                # extra NaN-filled rows instead of joining the single row correctly.
+                                                event_details_df = event_details_df.reset_index(drop=True)
                                                 # Add prefix to avoid column name conflicts
                                                 event_details_df.columns = ['detail_' + col for col in event_details_df.columns]
                                                 # Combine with main dataframe - preserve geometry
                                                 geometry_col = events_gdf.geometry
                                                 events_gdf = pd.concat([events_gdf.reset_index(drop=True), event_details_df], axis=1)
-                                                st.write("DEBUG after concat shape:", events_gdf.shape)
                                                 # Restore as GeoDataFrame
                                                 events_gdf = gpd.GeoDataFrame(events_gdf, geometry=geometry_col.reset_index(drop=True), crs=4326)
                                             
@@ -1423,7 +1415,7 @@ if st.session_state.authenticated:
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.3). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.4). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
 
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
 
@@ -1460,7 +1452,7 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.3). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.4). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
 
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
 
