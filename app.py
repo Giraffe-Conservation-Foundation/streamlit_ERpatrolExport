@@ -1203,7 +1203,47 @@ if st.session_state.authenticated:
                                                     events_gdf['subject_id'] = events_gdf['reported_by'].apply(
                                                         lambda x: x.get('id', '') if isinstance(x, dict) else ''
                                                     )
-                                            
+
+                                            # Merge repeat-group "orphan" child rows with their parent.
+                                            # Must run BEFORE event_details normalisation so the list-of-dicts
+                                            # explode never double-processes individual-level data.
+                                            # Pattern: API returns 1 parent row (event metadata, no individual
+                                            # data) + N child rows (individual data, no event metadata).
+                                            # Desired: N rows each containing both sets of data.
+                                            _id_check = next(
+                                                (c for c in ['event_type', 'serial_number', 'time']
+                                                 if c in events_gdf.columns),
+                                                None
+                                            )
+                                            if _id_check:
+                                                _orphan = events_gdf[_id_check].isna()
+                                                if _orphan.any() and not _orphan.all():
+                                                    # Forward-fill event metadata onto orphan child rows only
+                                                    _meta = [c for c in [
+                                                        'time', 'id', 'serial_number', 'event_type',
+                                                        'priority', 'title', 'state', 'updated_at',
+                                                        'created_at', 'is_collection', 'reported_by',
+                                                        'longitude', 'latitude',
+                                                        'subject_name', 'subject_id',
+                                                    ] if c in events_gdf.columns]
+                                                    events_gdf[_meta] = events_gdf[_meta].ffill()
+                                                    # Forward-fill the geometry point
+                                                    _geom = events_gdf.geometry.values.copy()
+                                                    for _i in range(1, len(_geom)):
+                                                        if _geom[_i] is None or (hasattr(_geom[_i], 'is_empty') and _geom[_i].is_empty):
+                                                            _geom[_i] = _geom[_i - 1]
+                                                    events_gdf = events_gdf.set_geometry(
+                                                        gpd.GeoSeries(_geom, crs=4326)
+                                                    )
+                                                    # Drop the original parent rows — superseded by child rows
+                                                    # that now carry both event metadata and individual data
+                                                    _had_orphan_after = (~_orphan) & _orphan.shift(-1, fill_value=False)
+                                                    events_gdf = gpd.GeoDataFrame(
+                                                        events_gdf[~_had_orphan_after].reset_index(drop=True),
+                                                        geometry='geometry',
+                                                        crs=4326
+                                                    )
+
                                             # Unnest event_details - FULLY EXPLODE THE DATA
                                             if 'event_details' in events_gdf.columns:
                                                 # Extract event_details fields into separate columns
@@ -1366,12 +1406,12 @@ if st.session_state.authenticated:
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.2). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
-    
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.3). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
-    
+
     Created by the Giraffe Conservation Foundation, powered by Ecoscope
-    
+
     Made with ❤️ for wildlife conservation
     """)
 
@@ -1403,11 +1443,11 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.2). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
-    
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.3). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
-    
+
     Created by the Giraffe Conservation Foundation, powered by Ecoscope
-    
+
     Made with ❤️ for wildlife conservation
     """)
