@@ -1211,12 +1211,16 @@ if st.session_state.authenticated:
                                             # data) + N child rows (individual data, no event metadata).
                                             # Desired: N rows each containing both sets of data.
                                             _id_check = next(
-                                                (c for c in ['event_type', 'serial_number', 'time']
+                                                (c for c in ['serial_number', 'time', 'event_type']
                                                  if c in events_gdf.columns),
                                                 None
                                             )
                                             if _id_check:
-                                                _orphan = events_gdf[_id_check].isna()
+                                                # Check for NaN *and* empty-string — the API sometimes
+                                                # returns '' instead of NaN for missing fields on child rows
+                                                _orphan = events_gdf[_id_check].apply(
+                                                    lambda x: pd.isna(x) or (isinstance(x, str) and x.strip() == '')
+                                                )
                                                 if _orphan.any() and not _orphan.all():
                                                     # Forward-fill event metadata onto orphan child rows only
                                                     _meta = [c for c in [
