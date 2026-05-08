@@ -674,6 +674,10 @@ if st.session_state.authenticated:
                     
                     with tempfile.TemporaryDirectory() as tmpdir:
                         shapefile_path = os.path.join(tmpdir, f"{base_filename}.shp")
+                        # Convert pandas StringDtype columns to object dtype (fiona/shapefile incompatibility)
+                        for col in gdf_export.columns:
+                            if hasattr(gdf_export[col], 'dtype') and isinstance(gdf_export[col].dtype, pd.StringDtype):
+                                gdf_export[col] = gdf_export[col].astype(object)
                         gdf_export.to_file(shapefile_path)
                         
                         # Create a zip file with all shapefile components
