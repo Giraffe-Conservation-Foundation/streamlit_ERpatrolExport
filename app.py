@@ -114,18 +114,62 @@ def resolve_uuid_columns(df, uuid_to_name, col_prefix='detail_'):
     return result
 
 
+def _patrols_in_range(patrols_df, since, until):
+    """Filter patrols by actual segment start/end times in Python.
+    EarthRanger's API date_range filter matches scheduled patrol dates which are
+    often blank, so it silently returns wrong results for many patrol setups."""
+    since_dt = pd.to_datetime(since, utc=True)
+    until_dt = pd.to_datetime(until, utc=True)
+    _START = ['start_time', 'lower', 'scheduled_start']
+    _END   = ['end_time',   'upper', 'scheduled_end']
+
+    def _seg_time(segs, fields):
+        for seg in (segs if isinstance(segs, list) else []):
+            if not isinstance(seg, dict):
+                continue
+            for src in [seg.get('time_range') or {}, seg]:
+                if not isinstance(src, dict):
+                    continue
+                for f in fields:
+                    v = src.get(f)
+                    if v and isinstance(v, str):
+                        return v
+        return None
+
+    def overlaps(row):
+        segs = row.get('patrol_segments', [])
+        start_str = _seg_time(segs, _START)
+        end_str   = _seg_time(segs, _END)
+        if not start_str and not end_str:
+            return True  # no times found — include rather than silently drop
+        try:
+            start = pd.to_datetime(start_str, utc=True) if start_str else None
+            end   = pd.to_datetime(end_str,   utc=True) if end_str   else None
+        except Exception:
+            return True
+        if start and end:
+            return start <= until_dt and end >= since_dt
+        if start:
+            return since_dt <= start <= until_dt
+        if end:
+            return end >= since_dt
+        return True
+
+    return patrols_df[patrols_df.apply(overlaps, axis=1)].copy()
+
+
 def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=None):
     """Download patrol tracks as GeoDataFrame and convert to LineStrings"""
     try:
-        # Get patrols based on filters
-        patrols_df = er_io.get_patrols(
-            since=since,
-            until=until,
-            status=['done', 'active']
-        )
-        
+        # Fetch all patrols and filter by segment times in Python.
+        # EarthRanger's API date filter matches scheduled dates (often blank) so it
+        # returns wrong results for sites where patrols have no scheduled dates set.
+        patrols_df = er_io.get_patrols(status=None)
         if patrols_df.empty:
             return None, "No patrols found for the specified criteria"
+        patrols_df = _patrols_in_range(patrols_df, since, until)
+        if patrols_df.empty:
+            return None, "No patrols found in the selected date range"
         
         # Extract patrol_type from nested patrol_segments structure
         def get_patrol_type(row):
@@ -191,19 +235,28 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
         patrol_ids = patrols_df['id'].tolist() if 'id' in patrols_df.columns else patrols_df.index.tolist()
         
         # Get patrol observations
-        patrol_observations = er_io.get_patrol_observations(
-            patrols_df=patrols_df,
-            include_patrol_details=True
-        )
-        
+        try:
+            patrol_observations = er_io.get_patrol_observations(
+                patrols_df=patrols_df,
+                include_patrol_details=True
+            )
+        except Exception as e:
+            return None, f"get_patrol_observations error: {type(e).__name__}: {e}"
+
         # Handle both Relocations object and GeoDataFrame
         if hasattr(patrol_observations, 'gdf'):
             points_gdf = patrol_observations.gdf
         else:
             points_gdf = patrol_observations
-            
+
         if points_gdf.empty:
-            return None, "No patrol tracks found"
+            seg_sample = patrols_df['patrol_segments'].iloc[0] if 'patrol_segments' in patrols_df.columns else 'N/A'
+            return None, (
+                f"No patrol tracks found. "
+                f"Patrols passed to get_patrol_observations: {len(patrols_df)} "
+                f"(IDs: {patrol_ids}). "
+                f"First segment sample: {str(seg_sample)[:300]}"
+            )
         
         # IMPORTANT: Filter to only include observations from the patrols we queried
         # This ensures we only get the selected patrol type
@@ -236,31 +289,30 @@ def download_patrol_tracks(er_io, patrol_type_value, since, until, subject_name=
         
         if time_col and 'patrol_start_time' in points_gdf.columns and 'patrol_end_time' in points_gdf.columns:
             try:
-                # Ensure time column is datetime
-                if not pd.api.types.is_datetime64_any_dtype(points_gdf[time_col]):
-                    points_gdf[time_col] = pd.to_datetime(points_gdf[time_col], format='ISO8601', utc=True)
-                
-                # Convert patrol_start_time and patrol_end_time from STRING to datetime
-                # These come as ISO format strings like "2025-10-25T04:59:42Z" or with microseconds
-                if points_gdf['patrol_start_time'].dtype == 'object':  # strings
-                    points_gdf['patrol_start_time'] = pd.to_datetime(points_gdf['patrol_start_time'], format='ISO8601', utc=True)
-                if points_gdf['patrol_end_time'].dtype == 'object':  # strings
-                    points_gdf['patrol_end_time'] = pd.to_datetime(points_gdf['patrol_end_time'], format='ISO8601', utc=True)
-                
-                # Ensure all are timezone-aware UTC
-                if points_gdf[time_col].dt.tz is None:
-                    points_gdf[time_col] = points_gdf[time_col].dt.tz_localize('UTC')
-                if points_gdf['patrol_start_time'].dt.tz is None:
-                    points_gdf['patrol_start_time'] = points_gdf['patrol_start_time'].dt.tz_localize('UTC')
-                if points_gdf['patrol_end_time'].dt.tz is None:
-                    points_gdf['patrol_end_time'] = points_gdf['patrol_end_time'].dt.tz_localize('UTC')
+                # Convert all three columns to timezone-aware UTC.
+                # Use format='ISO8601' for string columns so pandas handles mixed
+                # ISO variants (with/without microseconds, Z vs +00:00) in the same
+                # column without failing. Already-datetime columns use utc=True alone.
+                def _to_utc(col):
+                    if pd.api.types.is_datetime64_any_dtype(col):
+                        return pd.to_datetime(col, utc=True)
+                    return pd.to_datetime(col, format='ISO8601', utc=True)
+
+                points_gdf[time_col] = _to_utc(points_gdf[time_col])
+                points_gdf['patrol_start_time'] = _to_utc(points_gdf['patrol_start_time'])
+                points_gdf['patrol_end_time'] = _to_utc(points_gdf['patrol_end_time'])
                 
                 # Filter: keep only points where recorded time is between patrol start and end times
                 within_patrol = (points_gdf[time_col] >= points_gdf['patrol_start_time']) & \
                                (points_gdf[time_col] <= points_gdf['patrol_end_time'])
                 points_gdf = points_gdf[within_patrol].copy()
             except Exception as e:
-                return None, "⚠️ No valid patrol data found within the selected date range and filters. Please check:\n• The date range contains patrols\n• The selected patrol type(s) are correct\n• The selected patrol leader(s) have patrols in this period"
+                import traceback
+                return None, (
+                    f"⚠️ Failed to filter points by patrol time range.\n"
+                    f"Error: {type(e).__name__}: {e}\n\n"
+                    f"{traceback.format_exc()}"
+                )
         
         total_removed = points_before_filter - len(points_gdf)
         
@@ -425,12 +477,10 @@ if st.session_state.authenticated:
     
     with st.spinner("Loading available filters from patrol data..."):
         try:
-            # Fetch patrols in the date range
-            sample_patrols = st.session_state.er_io.get_patrols(
-                since=since,
-                until=until,
-                status=['done', 'active']
-            )
+            # Fetch all patrols and filter by segment times in Python
+            sample_patrols = st.session_state.er_io.get_patrols(status=None)
+            if not sample_patrols.empty:
+                sample_patrols = _patrols_in_range(sample_patrols, since, until)
             
             if not sample_patrols.empty:
                 # Extract patrol types from actual patrols
@@ -1415,7 +1465,7 @@ if st.session_state.authenticated:
     st.markdown("""
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.4). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.5). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
 
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
 
@@ -1452,7 +1502,7 @@ else:
     
     ---
     
-    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.4). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
+    **Citation:** Marneweck, CJ (2026) EarthRanger patrol shapefile downloader (v1.1.5). Giraffe Conservation Foundation, Windhoek, Namibia. Available at: https://erpatrolexport.streamlit.app/
 
     Opensource code on GitHub: https://github.com/Giraffe-Conservation-Foundation/streamlit_ERpatrolExport
 

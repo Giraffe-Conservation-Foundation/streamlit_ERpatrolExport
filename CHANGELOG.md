@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Streamlit for web interface
 - Folium for interactive mapping (optional)
 
+## [1.1.5] - 2026-05-08
+
+### Fixed
+- Datetime parsing failure on EarthRanger instances where `patrol_end_time` (and related columns) contain a mix of ISO 8601 timestamps with and without fractional seconds (e.g. `2026-04-03T22:43:11Z` alongside `2026-04-03T22:43:11.123Z`). Replaced the bare `pd.to_datetime(..., utc=True)` call (which infers a single format and fails on mixed variants) with `format='ISO8601'` for string columns, which handles all ISO 8601 variants in the same column.
+
 ## [Unreleased]
 
 ### Planned
